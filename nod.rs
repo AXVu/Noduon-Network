@@ -29,9 +29,9 @@ As of now, there is only 1 kind of layer, but this may increase in the future.
  */
 
 use std::vec;
+use rand::Rng;
 
 struct InputNoduon {
-    name: String,
     value: f64
 }
 
@@ -95,6 +95,13 @@ impl Noduon {
         }
     }
 
+    fn set_value(&mut self, new_value: f64) {
+        match self {
+            Noduon::Input(f) => f.value = new_value,
+            default => ()
+        }
+    }
+
     // Gets weights for non-inputs, will return an empty vector if applied to input
     fn get_weights(&self) -> Vec<f64> {
         match self {
@@ -155,8 +162,8 @@ impl Noduon {
                         } else {
                             0.0
                         }},
-                    "sigmod" => 1.0 / (1.0 + (-total).exp()),
-                    _default => 0.0
+                    "sigmoid" => 1.0 / (1.0 + (-total).exp()),
+                    _default => total
                  };
 
                 total
@@ -179,6 +186,7 @@ enum Layer {
 }
 
 impl Layer {
+    // The standard process of a layer, taking the previous layer's output and outputting the new layer
     fn process(&self, past_layer: Vec<f64>) -> Vec<f64> {
         match self {
             Layer::Standard(f) => {
@@ -194,17 +202,176 @@ impl Layer {
             }
         }
     }
+
+    // Returns the weights as a matrix. Rows are noduons, columns are the previous layer's noduons
+    fn weights_as_matrix(&self) -> Vec<Vec<f64>> {
+        match self {
+            Layer::Standard(f) => {
+                let mut layer_matrix: Vec<Vec<f64>> = vec![];
+                for noduon in &f.noduons {
+                    layer_matrix.push(noduon.get_weights())
+                }
+                layer_matrix
+            }
+        }
+    }
+
+    fn set_values(&mut self, values: Vec<f64>) {
+        match self {
+            Layer::Standard(f) => {
+                for i in 0..values.len() {
+                    f.noduons[i].set_value(values[i]);
+                }
+            }
+        }
+    }
+
+    // Adds the given noduon to the layer
+    fn add_noduon(&mut self, noduon: Noduon) {
+        match self {
+            Layer::Standard(f) => {
+                f.noduons.push(noduon)
+            }
+        }
+    }
+
+    // Adds a fully connected noduon to the layer
+    fn add_dense_noduon(&mut self, previous_layer_noduons: usize, function: String) {
+        match self {
+            Layer::Standard(f) => {
+
+                let mut rng = rand::thread_rng();
+                let weight: Vec<f64> = (0..previous_layer_noduons).map(|_| rng.gen_range(-1.0..=1.0)).collect();
+                let connects: Vec<bool> = (0..previous_layer_noduons).map(|_| true).collect();
+                let new_noduon: Noduon = Noduon::Inner1D(InnerNoduon1D { connections: connects, weights: weight, function: function });
+                f.noduons.push(new_noduon);
+            }
+        }
+    }
+
+    // Adds a fully connected output noduon to the layer
+    fn add_dense_output_noduon(&mut self, previous_layer_noduons: usize, function: String, name: String) {
+        match self {
+            Layer::Standard(f) => {
+
+                let mut rng = rand::thread_rng();
+                let weight: Vec<f64> = (0..previous_layer_noduons).map(|_| rng.gen_range(-1.0..=1.0)).collect();
+                let connects: Vec<bool> = (0..previous_layer_noduons).map(|_| true).collect();
+                let new_noduon: Noduon = Noduon::Output1D(OutputNoduon1D{ connections: connects, weights: weight, name: name, function: function });
+                f.noduons.push(new_noduon);
+            }
+        }
+    }
+
+    fn get_size(&self) -> usize{
+        match self {
+            Layer::Standard(f) => f.noduons.len()
+        }
+    }
+
+}
+
+struct Network {
+    layers: Vec<Layer>,
+    num_inputs: usize,
+    num_outputs: usize,
+    target: usize
+}
+
+impl Network {
+    
+    // Add layer to network
+    fn add_empty_layer(&mut self) {
+        self.layers.push(Layer::Standard(Layer1D { noduons: vec![] }));
+    }
+
+    // Add noduon to currently targeted layer
+    fn add_noduon(&mut self, noduon: Noduon) {
+        self.layers[self.target].add_noduon(noduon)
+    }
+
+    // Add dense noduon to currently targeted layer
+    fn add_dense_noduon(&mut self, function: String) {
+        if self.target != 0 {
+            let previous_size = self.layers[self.target - 1].get_size();
+            self.layers[self.target].add_dense_noduon(previous_size, function)
+        }
+    }
+
+    // Add built layer to network
+    fn add_layer(&mut self, layer: Layer) {
+        self.layers.push(layer)
+    }
+
+    // Add an input layer to network
+    fn add_input_layer(&mut self, num_inputs: usize, input_names: Vec<String>) {
+        let mut noduons: Vec<Noduon> = vec![];
+        for i in 0..num_inputs {
+                noduons.push(Noduon::Input(InputNoduon {value: 0.0 }))
+        }
+        noduons.push(Noduon::Bias);
+
+        self.layers.push(Layer::Standard(Layer1D { noduons: noduons }))
+    }
+
+    // Add a dense layer to network
+    fn add_dense_layer(&mut self, num_noduons: usize, function: String) {
+        let previous_size: usize = self.layers[self.layers.len() - 1].get_size();
+
+        let mut new_layer: Layer = Layer::Standard(Layer1D { noduons: vec![] });
+
+        for _i in 0..num_noduons {
+            new_layer.add_dense_noduon(previous_size, function.clone());
+        }
+        new_layer.add_noduon(Noduon::Bias);
+        self.add_layer(new_layer)
+    }
+
+    fn add_dense_output_layer(&mut self, num_outputs: usize, output_names: Vec<String>, function: String) {
+        let previous_size: usize = self.layers[self.layers.len() - 1].get_size();
+
+        let mut new_layer: Layer = Layer::Standard(Layer1D { noduons: vec![] });
+
+        for i in 0..num_outputs {
+            new_layer.add_dense_output_noduon(previous_size, function.clone(), output_names[i].clone());
+        }
+
+        self.add_layer(new_layer)
+    }
+
+    // Moves target forward 1, allowing for editing of the next layer
+    fn lock_layer(&mut self) {
+        self.target += 1
+    }
+
+    // Updates input and output num values, assuming the last layer is an output layer
+    fn update_network(&mut self) {
+        self.num_inputs = self.layers[0].get_size();
+        self.num_outputs = self.layers[self.layers.len() - 1].get_size();
+    }
+
+    fn process(&mut self, inputs: Vec<f64>) -> Vec<f64> {
+
+        if inputs.len() == self.num_inputs {
+            self.layers[0].set_values(inputs);
+        }
+
+        let mut results: Vec<Vec<f64>> = vec![vec![]];
+        for i in 0..self.layers.len() {
+            results.push(self.layers[i].process(results[i].clone()));
+        }
+
+        return results[self.layers.len()].clone();
+    }
+
 }
 
 fn main() {
-    let a: Noduon = Noduon::Input(InputNoduon { name: String::from("Barry"), value: 5.0 });
-    let b: Noduon = Noduon::Inner1D(InnerNoduon1D { connections: vec![true], weights: vec![0.5], function: String::from("relu") });
-    let c: Noduon = Noduon::Output1D(OutputNoduon1D { name: String::from("Allen"), connections: vec![false,true], weights: vec![0.0, 0.5], function: String::from("relu") });
-
-    let layers: Vec<Noduon> = vec![a,b,c];
-    let mut previous: Vec<f64> = vec![];
-    for layer in 0..layers.len() {
-        previous.push(layers[layer].result(&previous))
-    }
-    print!("{:?}",previous)
+    let mut model: Network = Network { layers: vec![], num_inputs: 0, num_outputs: 0, target: 0 };
+    model.add_input_layer(3, vec!["A", "B", "C"].iter().map(|&x| String::from(x)).collect());
+    model.add_dense_layer(8, String::from("relu"));
+    model.add_dense_output_layer(4, vec!["W","X","Y","Z"].iter().map(|&x| String::from(x)).collect(), String::from("sigmoid"));
+    model.update_network();
+    let output: Vec<f64> = model.process(vec![0.0, 0.0, 0.0]);
+    println!("{:?}",output)
 }
