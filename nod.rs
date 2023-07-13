@@ -11,21 +11,58 @@ Output Noduons, which are exactly the same as Inner noduons except they are name
 Detailed and Methods:
 
 Noduons methods are implemented in the Noduon enum
-set_weights(&self, new_weights) -> Checks if new_weights is the same size as the old weights and replaces them. Input/Bias->N/a
-set_connections(&self, new_connections) -> checks if new_connections is the same size as old connections and replaces them. Input/Bias->N/A
+set_weights(&mut self, new_weights) -> Checks if new_weights is the same size as the old weights and replaces them. Input/Bias->N/a
+set_connections(&mut self, new_connections) -> checks if new_connections is the same size as old connections and replaces them. Input/Bias->N/A
+set_value(&mut self, new_value) -> Sets a new value for the input node. Does nothing for other types.
 get_weights(&self) -> Returns the current weights of the given Noduon. Input/Bias -> empty vector
 get_connections(&self) -> Returns the current connections of the given Noduon. Input/Bias -> empty vector
+get_type(&self) -> Returns the noduon type as a string ("input", "inner1d",etc)
 result(&self, past_layer) -> Returns the sum of each value of the input vector times the connected weights, passed through an activation
 function. Input -> returns value. Bias -> returns 1
 
+**********
 
-The next up structure in the hierarchy is the layer.
-Layers contain any number of noduons of various types.
+The next structure in the hierarchy is the layer.
+Layers contain any number of noduons of various types. (saved in self.noduons)
 Layers have functions that will take an input and generate the output vector resulting from each of its noduon's calculations.
 Layers will have "presets" that can be used to generate different layer types.
 As of now, there is only 1 kind of layer, but this may increase in the future.
+ALWAYS put bias nodes LAST in input layers, builder functions do this by default. Otherwise setter function will not work
 
+Layer methods are implemented in the Layer enum
+get_size(&self) -> Returns the number of Noduons in the layer
+get_types(&self) -> Returns the types of the noduons in this layer as a vector
+get_weights(&self) -> Returns the weights of the noduons in this layer as a matrix of weight values
+get_connections(&self) -> Returns the weights of the noduons in this layer as a matrix of boolean values
+set_values(&mut self) -> Sets the values of inputs, starting at the top
+add_noduon(&mut self, noduon) -> Adds an already-built Noduon of any type to the layer
+add_dense_noduon(&mut self, previous_layer_noduons, function) -> Builds a noduon fully connected to the previous layer, with the specified activation function
+add_dense_output_noduon(&mut self, previous_layer_noduons, fucntion) -> Builds a noduon fully connected to the previous layer, with the specified activation function and name
+process(&self, past_layer) -> Takes the result of a previous layer as a vector, outputting the results of this layer as a vector.
 
+***********
+The next structure in the hierarchy is the Network.
+Networks contain any number of layers of various (only one right now) types. (saved in self.layers)
+Networks have functions that will take inputs and generate the expected output
+Networks will have "presets" that can be used to generate Networks of specific structure
+Networks have a "target" trait that will focus on a certain layer, and only move forwards
+As of now, there is only 1 kind of network (feed-forward), but this may change in the future.
+As of now, Inputs will only work in the first layer, and outputs will only work in the last layer
+
+Network methods are implemented directly in the struct
+add_empty_layer(&mut self) -> Adds an empty layer with no noduons to the network
+add_noduon(&mut self, noduon) -> Adds the specified noduon to the target layer
+add_dense_noduon(&mut self, function) -> Adds a fully connected noduon to the target layer, inferring the number of connections by the size of that layer
+lock_layer(&mut self) -> Moves target forward 1, stopping modification of the previous layer and allowing it for the next.
+add_layer(&mut self, layer) -> Adds the specified layer to the network
+add_input_layer(&mut self, num_inputs) -> Adds a layer with the specified number of input noduons
+add_dense_layer(&mut self, num_noduons, function) -> Adds a dense layer to the network with num_noduons Noduons and the specified function. Moves the target to this layer.
+add_dense_output_layer(&mut self, num_outputs, output_names, function) -> Adds a dense layer of output noduons with the specified names and function. Moves the target to this layer.
+update_network(&mut self) -> Updates the num_inputs and num_outputs parameters to reflect the first and last layers of the network.
+get_weights(&self) -> Returns the weights of noduons as a 3d matrix. Rows are layers, columns are noduons, elements are weights.
+get_types(&self) -> Returns the types of noduons as a matrix. Rows are layers, columns are noduon types as strings.
+get_connections(&self) -> Returns the truth value of noduon connections as a 3d matrix. rows are layers, columns are noduons, elements are weights.
+process(&mut self, inputs) -> With the given inputs, do a full process through each layer and return the output of the network.
  */
 
 use std::vec;
@@ -95,10 +132,21 @@ impl Noduon {
         }
     }
 
+    // Set the input value. Doesn't do anything for other types
     fn set_value(&mut self, new_value: f64) {
         match self {
             Noduon::Input(f) => f.value = new_value,
             default => ()
+        }
+    }
+
+    // Return the noduon type as a string
+    fn get_type(&self) -> String{
+        match self {
+            Noduon::Input(_) => String::from("input"),
+            Noduon::Inner1D(_) => String::from("inner1d"),
+            Noduon::Output1D(_) => String::from("output1d"),
+            Noduon::Bias => String::from("bias")
         }
     }
 
@@ -107,7 +155,7 @@ impl Noduon {
         match self {
             Noduon::Input(_) | Noduon::Bias => vec![],
             Noduon::Inner1D(f) => f.weights.clone(),
-            Noduon::Output1D(f) => f.weights.clone()
+            Noduon::Output1D(f) => f.weights.clone(),
         }
     }
 
@@ -203,19 +251,28 @@ impl Layer {
         }
     }
 
-    // Returns the weights as a matrix. Rows are noduons, columns are the previous layer's noduons
-    fn weights_as_matrix(&self) -> Vec<Vec<f64>> {
+    // Returns Noduon types as a vector
+    fn get_types(&self) -> Vec<String> {
         match self {
-            Layer::Standard(f) => {
-                let mut layer_matrix: Vec<Vec<f64>> = vec![];
-                for noduon in &f.noduons {
-                    layer_matrix.push(noduon.get_weights())
-                }
-                layer_matrix
-            }
+            Layer::Standard(f) => f.noduons.iter().map(|x| x.get_type()).collect()
         }
     }
 
+    // Returns the weights as a matrix. Rows are noduons, columns are the previous layer's noduons
+    fn get_weights(&self) -> Vec<Vec<f64>> {
+        match self {
+            Layer::Standard(f) => f.noduons.iter().map(|x| x.get_weights()).collect()
+        }
+    }
+
+    // Returns the connections of each Noduon as a matrix. Empty lists are either Input or Bias noduons.
+    fn get_connections(&self) -> Vec<Vec<bool>> {
+        match self {
+            Layer::Standard(f) => f.noduons.iter().map(|x| x.get_connections()).collect()
+        }
+    }
+
+    // Sets the value of each input noduon
     fn set_values(&mut self, values: Vec<f64>) {
         match self {
             Layer::Standard(f) => {
@@ -271,6 +328,10 @@ impl Layer {
 
 }
 
+// End Layer
+/////////////////////////////////////////////////
+// Start Network
+
 struct Network {
     layers: Vec<Layer>,
     num_inputs: usize,
@@ -304,7 +365,7 @@ impl Network {
     }
 
     // Add an input layer to network
-    fn add_input_layer(&mut self, num_inputs: usize, input_names: Vec<String>) {
+    fn add_input_layer(&mut self, num_inputs: usize) {
         let mut noduons: Vec<Noduon> = vec![];
         for i in 0..num_inputs {
                 noduons.push(Noduon::Input(InputNoduon {value: 0.0 }))
@@ -324,9 +385,11 @@ impl Network {
             new_layer.add_dense_noduon(previous_size, function.clone());
         }
         new_layer.add_noduon(Noduon::Bias);
-        self.add_layer(new_layer)
+        self.add_layer(new_layer);
+        self.target = self.layers.len()
     }
 
+    // Add a fully connected layer of outputs
     fn add_dense_output_layer(&mut self, num_outputs: usize, output_names: Vec<String>, function: String) {
         let previous_size: usize = self.layers[self.layers.len() - 1].get_size();
 
@@ -336,7 +399,8 @@ impl Network {
             new_layer.add_dense_output_noduon(previous_size, function.clone(), output_names[i].clone());
         }
 
-        self.add_layer(new_layer)
+        self.add_layer(new_layer);
+        self.target = self.layers.len() - 1;
     }
 
     // Moves target forward 1, allowing for editing of the next layer
@@ -350,6 +414,22 @@ impl Network {
         self.num_outputs = self.layers[self.layers.len() - 1].get_size();
     }
 
+    // Returns weights as a 3d matrix. Rows are layers, columns are noduons, elements are weights. Empty columns are either input or bias
+    fn get_weights(&self) -> Vec<Vec<Vec<f64>>> {
+        self.layers.iter().map(|x| x.get_weights()).collect()
+    }
+
+    // Returns Noduon types as a matrix. Rows are Layers, Columns are types
+    fn get_types(&self) -> Vec<Vec<String>> {
+        self.layers.iter().map(|x| x.get_types()).collect()
+    }
+
+    // Returns Noduon connections as a 3d matrix
+    fn get_connections(&self) -> Vec<Vec<Vec<bool>>> {
+        self.layers.iter().map(|x| x.get_connections()).collect()
+    }
+
+    // Takes inputs, passing each layer's result to each other. 
     fn process(&mut self, inputs: Vec<f64>) -> Vec<f64> {
 
         if inputs.len() == self.num_inputs {
@@ -368,10 +448,12 @@ impl Network {
 
 fn main() {
     let mut model: Network = Network { layers: vec![], num_inputs: 0, num_outputs: 0, target: 0 };
-    model.add_input_layer(3, vec!["A", "B", "C"].iter().map(|&x| String::from(x)).collect());
+    model.add_input_layer(2);
     model.add_dense_layer(8, String::from("relu"));
-    model.add_dense_output_layer(4, vec!["W","X","Y","Z"].iter().map(|&x| String::from(x)).collect(), String::from("sigmoid"));
+    model.add_dense_output_layer(4, vec!["0","1","2","3"].iter().map(|&x| String::from(x)).collect(), String::from("sigmoid"));
     model.update_network();
-    let output: Vec<f64> = model.process(vec![0.0, 0.0, 0.0]);
-    println!("{:?}",output)
+    let mut output: Vec<f64> = model.process(vec![0.0, 0.0, 0.0]);
+    println!("{:?}",output);
+    output = model.process(vec![0.0, 0.0, 0.0]);
+    println!("{:?}",output);
 }
