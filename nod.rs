@@ -65,8 +65,13 @@ get_connections(&self) -> Returns the truth value of noduon connections as a 3d 
 process(&mut self, inputs) -> With the given inputs, do a full process through each layer and return the output of the network.
  */
 
-use std::vec;
+use std::{vec, fs};
+use std::error::Error;
 use rand::Rng;
+use std::time;
+use std::io::prelude::*;
+use std::fs::File;
+use std::path::Path;
 
 struct InputNoduon {
     value: f64
@@ -444,16 +449,87 @@ impl Network {
         return results[self.layers.len()].clone();
     }
 
+    // Converts the weights of a network into a csv with a name specified by the file_name parameter
+    fn weights_to_csv(&self, file_name: String) -> Result<(), Box<dyn Error>> {
+        
+        if Path::new(&(file_name.clone()+&String::from(".txt"))).exists() {
+            fs::remove_file(file_name.clone()+&String::from(".txt"))?;
+        }
+
+        let mut file = File::create(file_name+&String::from(".txt"))?;
+        let weights = self.get_weights();
+        let shape: Vec<String> = self.layers.iter().map(|x| x.get_size().to_string()).collect();
+
+        writeln!(file, "{}", shape.join(","))?;
+
+        for layer in weights {
+            for noduon in layer {
+                writeln!(file, "{}", noduon.iter().map(|x| x.to_string()).collect::<Vec<String>>().join(","))?;
+            }
+        }
+        
+        Ok(())
+    }
+
+    // Converts the connections of a network into a csv with a name
+    fn connections_to_csv(&self, file_name: String) -> Result<(), Box<dyn Error>> {
+
+        if Path::new(&(file_name.clone()+&String::from(".txt"))).exists() {
+            fs::remove_file(file_name.clone()+&String::from(".txt"))?;
+        }
+
+        let mut file = File::create(file_name+&String::from(".txt"))?;
+        let connections = self.get_connections();
+        let shape: Vec<String> = self.layers.iter().map(|x| x.get_size().to_string()).collect();
+
+        writeln!(file, "{}", shape.join(","))?;
+
+        for layer in connections {
+            for noduon in layer {
+                writeln!(file, "{}", noduon.iter().map(|x| x.to_string()).collect::<Vec<String>>().join(","))?;
+            }
+        }
+        
+        Ok(())
+    }
+
+    // Converts the types of noduons of a network into a csv with a name
+    fn types_to_csv(&self, file_name: String) -> Result<(), Box<dyn Error>> {
+
+        if Path::new(&(file_name.clone()+&String::from(".txt"))).exists() {
+            fs::remove_file(file_name.clone()+&String::from(".txt"))?;
+        }
+
+        let mut file = File::create(file_name+&String::from(".txt"))?;
+        let connections = self.get_types();
+        let shape: Vec<String> = self.layers.iter().map(|x| x.get_size().to_string()).collect();
+
+        writeln!(file, "{}", shape.join(","))?;
+
+        for layer in connections {
+                writeln!(file, "{}", layer.iter().map(|x| x.to_string()).collect::<Vec<String>>().join(","))?;
+        }
+        
+        Ok(())
+    }
+
 }
 
 fn main() {
     let mut model: Network = Network { layers: vec![], num_inputs: 0, num_outputs: 0, target: 0 };
-    model.add_input_layer(2);
-    model.add_dense_layer(8, String::from("relu"));
-    model.add_dense_output_layer(4, vec!["0","1","2","3"].iter().map(|&x| String::from(x)).collect(), String::from("sigmoid"));
-    model.update_network();
-    let mut output: Vec<f64> = model.process(vec![0.0, 0.0, 0.0]);
-    println!("{:?}",output);
-    output = model.process(vec![0.0, 0.0, 0.0]);
-    println!("{:?}",output);
+    model.add_input_layer(3);
+    model.add_dense_layer(2, String::from("relu"));
+    model.add_dense_output_layer(1, vec![String::from("end")], String::from("relu"));
+
+    let reps = 1;
+    let start = time::Instant::now();
+    for _i in 0..reps {
+        model.process(vec![0.0,0.0,0.0]);
+    }
+    let end = start.elapsed().as_secs_f32();
+    println!("This took {} seconds, for {} seconds per rep", end, end / reps as f32);
+
+    println!("{:?}",model.weights_to_csv(String::from("chicken")));
+    println!("{:?}",model.connections_to_csv(String::from("apple")));
+    println!("{:?}",model.types_to_csv(String::from("ham")))
 }
