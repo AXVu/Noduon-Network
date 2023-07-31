@@ -65,10 +65,11 @@ get_connections(&self) -> Returns the truth value of noduon connections as a 3d 
 process(&mut self, inputs) -> With the given inputs, do a full process through each layer and return the output of the network.
  */
 
-use std::{vec, fs};
+use std::{vec, fs, io};
 use std::error::Error;
 use rand::Rng;
 use std::time;
+use std::io::{Read, BufRead};
 use std::io::prelude::*;
 use std::fs::File;
 use std::path::Path;
@@ -104,34 +105,34 @@ enum Noduon {
 
 impl Noduon {
     // Set weights for non-inputs, will do nothing if applied to input
-    fn set_weights(&mut self, new_weights: Vec<f64>) {
+    fn set_weights(&mut self, new_weights: &Vec<f64>) {
         match self {
             Noduon::Input(_) | Noduon::Bias => {},
             Noduon::Inner1D(f) => {
                 if new_weights.len() == f.weights.len() {
-                    f.weights = new_weights;
+                    f.weights = new_weights.to_vec();
                 }
             },
             Noduon::Output1D(f) => {
                 if new_weights.len() == f.weights.len() {
-                    f.weights = new_weights;
+                    f.weights = new_weights.to_vec();
                 }
             }
         }
     }
 
     // Sets connections for non-inputs, will do nothing if applied to input
-    fn set_connections(&mut self, new_connections: Vec<bool>) {
+    fn set_connections(&mut self, new_connections: &Vec<bool>) {
         match self {
             Noduon::Input(_) | Noduon::Bias => {},
             Noduon::Inner1D(f) => {
                 if new_connections.len() == f.connections.len() {
-                    f.connections = new_connections;
+                    f.connections = new_connections.to_vec();
                 }
             },
             Noduon::Output1D(f) => {
                 if new_connections.len() == f.connections.len() {
-                    f.connections = new_connections;
+                    f.connections = new_connections.to_vec();
                 }
             }
         }
@@ -288,6 +289,28 @@ impl Layer {
         }
     }
 
+    // Sets the weights of each noduon in a given layer
+    fn set_weights(&mut self, new_weights: &Vec<Vec<f64>>) {
+        match self {
+            Layer::Standard(f) => {
+                for i in 0..f.noduons.len() {
+                    f.noduons[i].set_weights(&new_weights[i]);
+                }
+            }
+        }
+    }
+
+    // Sets the connections of each noduon in a given layer
+    fn set_connections(&mut self, new_connections: &Vec<Vec<bool>>) {
+        match self {
+            Layer::Standard(f) => {
+                for i in 0..f.noduons.len() {
+                    f.noduons[i].set_connections(&new_connections[i]);
+                }
+            }
+        }
+    }
+
     // Adds the given noduon to the layer
     fn add_noduon(&mut self, noduon: Noduon) {
         match self {
@@ -364,6 +387,14 @@ impl Network {
         }
     }
 
+    // Add dense output noduon
+    fn add_dense_output_noduon(&mut self, function: String, name: String) {
+        if self.target != 0 {
+            let previous_size = self.layers[self.target - 1].get_size();
+            self.layers[self.target].add_dense_output_noduon(previous_size, function, name);
+        }
+    }
+
     // Add built layer to network
     fn add_layer(&mut self, layer: Layer) {
         self.layers.push(layer)
@@ -434,6 +465,20 @@ impl Network {
         self.layers.iter().map(|x| x.get_connections()).collect()
     }
 
+    // Sets weights of each noduon in the network. You should include empty values for bias or input values.
+    fn set_weights(&mut self, new_weights: Vec<Vec<Vec<f64>>>) {
+        for i in 0..self.layers.len() {
+            self.layers[i].set_weights(&new_weights[i]);
+        }
+    }
+
+    // Sets connections of each noduon in the network. You should invlude empty values for bias or input values
+    fn set_connections(&mut self, new_connections: Vec<Vec<Vec<bool>>>) {
+        for i in 0..self.layers.len() {
+            self.layers[i].set_connections(&new_connections[i])
+        }
+    }
+
     // Takes inputs, passing each layer's result to each other. 
     fn process(&mut self, inputs: Vec<f64>) -> Vec<f64> {
 
@@ -449,8 +494,8 @@ impl Network {
         return results[self.layers.len()].clone();
     }
 
-    // Converts the weights of a network into a csv with a name specified by the file_name parameter
-    fn weights_to_csv(&self, file_name: String) -> Result<(), Box<dyn Error>> {
+    // Converts the weights of a network into a txt with a name specified by the file_name parameter
+    fn weights_to_txt(&self, file_name: String) -> Result<(), Box<dyn Error>> {
         
         if Path::new(&(file_name.clone()+&String::from(".txt"))).exists() {
             fs::remove_file(file_name.clone()+&String::from(".txt"))?;
@@ -471,8 +516,8 @@ impl Network {
         Ok(())
     }
 
-    // Converts the connections of a network into a csv with a name
-    fn connections_to_csv(&self, file_name: String) -> Result<(), Box<dyn Error>> {
+    // Converts the connections of a network into a txt with a name
+    fn connections_to_txt(&self, file_name: String) -> Result<(), Box<dyn Error>> {
 
         if Path::new(&(file_name.clone()+&String::from(".txt"))).exists() {
             fs::remove_file(file_name.clone()+&String::from(".txt"))?;
@@ -493,8 +538,8 @@ impl Network {
         Ok(())
     }
 
-    // Converts the types of noduons of a network into a csv with a name
-    fn types_to_csv(&self, file_name: String) -> Result<(), Box<dyn Error>> {
+    // Converts the types of noduons of a network into a txt with a name
+    fn types_to_txt(&self, file_name: String) -> Result<(), Box<dyn Error>> {
 
         if Path::new(&(file_name.clone()+&String::from(".txt"))).exists() {
             fs::remove_file(file_name.clone()+&String::from(".txt"))?;
@@ -502,9 +547,6 @@ impl Network {
 
         let mut file = File::create(file_name+&String::from(".txt"))?;
         let connections = self.get_types();
-        let shape: Vec<String> = self.layers.iter().map(|x| x.get_size().to_string()).collect();
-
-        writeln!(file, "{}", shape.join(","))?;
 
         for layer in connections {
                 writeln!(file, "{}", layer.iter().map(|x| x.to_string()).collect::<Vec<String>>().join(","))?;
@@ -513,23 +555,139 @@ impl Network {
         Ok(())
     }
 
+    // Generates files for the types, connections, and weights of the model
+    fn model_to_txt(&self, model_name: String) -> Result<(), Box<dyn Error>>{
+        self.types_to_txt(model_name.clone()+&String::from("_types"))?;
+        self.connections_to_txt(model_name.clone()+&String::from("_connections"))?;
+        self.weights_to_txt(model_name.clone()+&String::from("_weights"))?;
+        Ok(())
+    }
+
+    // Take the weights from a text file
+    fn weights_from_txt(&mut self, file_name: String) -> Result<(), Box<dyn Error>> {
+        let path = file_name + &String::from(".txt");
+        let mut file = File::open(path)?;
+        let reader = io::BufReader::new(file);
+        let mut i: usize = 0;
+        let mut j: usize = 0;
+        let mut layer_num: usize = 0;
+        let mut new_weights: Vec<Vec<Vec<f64>>> = vec![vec![]];
+        let num_shape: Vec<usize> = self.layers.iter().map(|x| x.get_size()).collect();
+        for line in reader.lines() {
+            if i == 0{
+                let my_shape: Vec<String> = self.layers.iter().map(|x| x.get_size().to_string()).collect();
+                let shape: Vec<String> = line?.split(',').map(|x| x.to_string()).collect();
+                if my_shape != shape {
+                    println!("Incorrect Shape");
+                    return Ok(());
+                }
+            } else {
+                let set = line?;
+                if j == num_shape[layer_num] {
+                    new_weights.push(vec![]);
+                    j = 0;
+                    layer_num += 1;
+                }
+                println!("{}",i);
+                if set.clone().len() != 0 {
+                let nod_weights: Vec<f64> = set.split(',').map(|x| x.parse::<f64>().unwrap()).collect();
+                new_weights[layer_num].push(nod_weights);
+                } else {
+                    new_weights[layer_num].push(vec![]);
+                }
+                j += 1;
+            }
+            i += 1;
+        }
+        println!("Setting weights\n{:?}",new_weights);
+        self.set_weights(new_weights);
+        Ok(())
+    }
+
+    // Take the connections from a text file
+    fn connections_from_txt(&mut self, file_name: String) -> Result<(), Box<dyn Error>> {
+        let path = file_name + &String::from(".txt");
+        let mut file = File::open(path)?;
+        let reader = io::BufReader::new(file);
+        let mut i: usize = 0;
+        let mut j: usize = 0;
+        let mut layer_num: usize = 0;
+        let mut new_connections: Vec<Vec<Vec<bool>>> = vec![vec![]];
+        let num_shape: Vec<usize> = self.layers.iter().map(|x| x.get_size()).collect();
+        for line in reader.lines() {
+            if i == 0{
+                let my_shape: Vec<String> = self.layers.iter().map(|x| x.get_size().to_string()).collect();
+                let shape: Vec<String> = line?.split(',').map(|x| x.to_string()).collect();
+                if my_shape != shape {
+                    println!("Incorrect Shape");
+                    return Ok(());
+                }
+            } else {
+                let set = line?;
+                if j == num_shape[layer_num] {
+                    new_connections.push(vec![]);
+                    j = 0;
+                    layer_num += 1;
+                }
+                println!("{}",i);
+                if set.clone().len() != 0 {
+                    let nod_connections: Vec<bool> = set.split(',').map(|x| x.parse::<bool>().unwrap()).collect();
+                    new_connections[layer_num].push(nod_connections);
+                } else {
+                    new_connections[layer_num].push(vec![]);
+                }
+                j += 1;
+            }
+            i += 1;
+        }
+        println!("Setting connections\n{:?}",new_connections);
+        self.set_connections(new_connections);
+        Ok(())
+    }
+
+
+}
+
+// Take the connections from a text file
+fn model_types_from_txt(file_name: String) -> Result<Network, Box<dyn Error>> {
+    let path = file_name + &String::from(".txt");
+    let mut file = File::open(path)?;
+    let reader = io::BufReader::new(file);
+    let mut new_network: Network = Network {layers: vec![], num_inputs: 0, num_outputs: 0, target: 0};
+    
+    let mut num_outputs = 0;
+    
+    for line in reader.lines() {
+        new_network.add_empty_layer();
+        let type_strings: Vec<String> = line?.split(',').map(|x| x.to_string()).collect();
+        for string in type_strings {
+            println!("{}",string);
+            match string.as_str() {
+                "input" => &new_network.add_noduon(Noduon::Input(InputNoduon { value: 0.0 })),
+                "inner1d" => &new_network.add_dense_noduon(String::from("relu")),
+                "bias" => &new_network.add_noduon(Noduon::Bias),
+                "output1d" => {
+                    new_network.add_dense_output_noduon(String::from("relu"), num_outputs.to_string());
+                    num_outputs = num_outputs + 1;
+                    &()
+                },
+                default => &()
+            };
+        }
+        new_network.lock_layer();
+    }
+    new_network.update_network();
+    Ok(new_network)
+}
+
+fn model_from_txt(type_file: String, weight_file: String, connection_file: String) -> Network {
+    let mut model: Network = model_types_from_txt(type_file).unwrap();
+    model.weights_from_txt(weight_file);
+    model.connections_from_txt(connection_file);
+    return model;
 }
 
 fn main() {
-    let mut model: Network = Network { layers: vec![], num_inputs: 0, num_outputs: 0, target: 0 };
-    model.add_input_layer(3);
-    model.add_dense_layer(2, String::from("relu"));
-    model.add_dense_output_layer(1, vec![String::from("end")], String::from("relu"));
-
-    let reps = 1;
-    let start = time::Instant::now();
-    for _i in 0..reps {
-        model.process(vec![0.0,0.0,0.0]);
-    }
-    let end = start.elapsed().as_secs_f32();
-    println!("This took {} seconds, for {} seconds per rep", end, end / reps as f32);
-
-    println!("{:?}",model.weights_to_csv(String::from("chicken")));
-    println!("{:?}",model.connections_to_csv(String::from("apple")));
-    println!("{:?}",model.types_to_csv(String::from("ham")))
+    let model: Network = model_from_txt(String::from("Boots_types"), String::from("Boots_weights"), String::from("Boots_connections"));
+    model.model_to_txt(String::from("with_the_fur"));
 }
