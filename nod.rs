@@ -74,10 +74,12 @@ use std::io::prelude::*;
 use std::fs::File;
 use std::path::Path;
 
+#[derive(Clone)]
 struct InputNoduon {
     value: f64
 }
 
+#[derive(Clone)]
 // A 1D Inner Noduon only connects to noduons on one dimension
 struct InnerNoduon1D {
     connections: Vec<bool>,
@@ -85,6 +87,7 @@ struct InnerNoduon1D {
     function: String
 }
 
+#[derive(Clone)]
 struct OutputNoduon1D {
     name: String,
     connections: Vec<bool>,
@@ -93,7 +96,7 @@ struct OutputNoduon1D {
 }
 
 
-
+#[derive(Clone)]
 enum Noduon {
 
     Input(InputNoduon),
@@ -174,6 +177,24 @@ impl Noduon {
         }
     }
 
+    fn randomize(&mut self) {
+        match self {
+            Noduon::Bias | Noduon::Input(_) => (),
+            Noduon::Inner1D(f) => {
+                let mut rng = rand::thread_rng();
+                for i in 0..f.weights.len() {
+                    f.weights[i] = rng.gen_range(-1.0..=1.0);
+                }
+            },
+            Noduon::Output1D(f) => {
+                let mut rng = rand::thread_rng();
+                for i in 0..f.weights.len() {
+                    f.weights[i] = rng.gen_range(-1.0..=1.0)
+                }
+            }
+        }
+    }
+
     // Passing in a previous layer's output vector, returns the output of a noduon. Returns the value of an input noduon
     fn result(&self, past_layer: &Vec<f64>) -> f64 {
         match self {
@@ -231,10 +252,12 @@ impl Noduon {
 ////////////////////////////////////
 // Start of Layer section
 
+#[derive(Clone)]
 struct Layer1D {
     noduons: Vec<Noduon>
 }
 
+#[derive(Clone)]
 enum Layer {
     Standard(Layer1D)
 }
@@ -348,6 +371,19 @@ impl Layer {
         }
     }
 
+    // Randomize the weights of each noduon in the layer
+    fn randomize(&mut self) {
+        match self {
+            Layer::Standard(f) => {
+                for noduon in 0..f.noduons.len() {
+                    f.noduons[noduon].randomize();
+                }
+            }
+        }
+    }
+
+
+    // Return the number of noduons in the layer
     fn get_size(&self) -> usize{
         match self {
             Layer::Standard(f) => f.noduons.len()
@@ -360,6 +396,7 @@ impl Layer {
 /////////////////////////////////////////////////
 // Start Network
 
+#[derive(Clone)]
 struct Network {
     layers: Vec<Layer>,
     num_inputs: usize,
@@ -387,7 +424,7 @@ impl Network {
         }
     }
 
-    // Add dense output noduon
+    // Add dense output noduon to currently targeted layer
     fn add_dense_output_noduon(&mut self, function: String, name: String) {
         if self.target != 0 {
             let previous_size = self.layers[self.target - 1].get_size();
@@ -588,7 +625,6 @@ impl Network {
                     j = 0;
                     layer_num += 1;
                 }
-                println!("{}",i);
                 if set.clone().len() != 0 {
                 let nod_weights: Vec<f64> = set.split(',').map(|x| x.parse::<f64>().unwrap()).collect();
                 new_weights[layer_num].push(nod_weights);
@@ -599,7 +635,6 @@ impl Network {
             }
             i += 1;
         }
-        println!("Setting weights\n{:?}",new_weights);
         self.set_weights(new_weights);
         Ok(())
     }
@@ -629,7 +664,6 @@ impl Network {
                     j = 0;
                     layer_num += 1;
                 }
-                println!("{}",i);
                 if set.clone().len() != 0 {
                     let nod_connections: Vec<bool> = set.split(',').map(|x| x.parse::<bool>().unwrap()).collect();
                     new_connections[layer_num].push(nod_connections);
@@ -640,12 +674,16 @@ impl Network {
             }
             i += 1;
         }
-        println!("Setting connections\n{:?}",new_connections);
         self.set_connections(new_connections);
         Ok(())
     }
 
 
+    // randomize the weights of the network
+    fn randomize(&mut self) {
+        let mut rng = rand::thread_rng();
+
+    }
 }
 
 // Take the connections from a text file
@@ -661,7 +699,6 @@ fn model_types_from_txt(file_name: String) -> Result<Network, Box<dyn Error>> {
         new_network.add_empty_layer();
         let type_strings: Vec<String> = line?.split(',').map(|x| x.to_string()).collect();
         for string in type_strings {
-            println!("{}",string);
             match string.as_str() {
                 "input" => &new_network.add_noduon(Noduon::Input(InputNoduon { value: 0.0 })),
                 "inner1d" => &new_network.add_dense_noduon(String::from("relu")),
@@ -680,6 +717,7 @@ fn model_types_from_txt(file_name: String) -> Result<Network, Box<dyn Error>> {
     Ok(new_network)
 }
 
+// Takes 3 input files and builds a model from them
 fn model_from_txt(type_file: String, weight_file: String, connection_file: String) -> Network {
     let mut model: Network = model_types_from_txt(type_file).unwrap();
     model.weights_from_txt(weight_file);
@@ -687,7 +725,20 @@ fn model_from_txt(type_file: String, weight_file: String, connection_file: Strin
     return model;
 }
 
+// Builds a sequential dense model from the given vector. The 0th element is the num inputs the last element is the num outputs
+fn build_typical_model(shape: Vec<usize>, inner_function: String, output_function: String) {
+    let mut model: Network = Network { layers: vec![], num_inputs: 0, num_outputs: 0, target: 0 };
+    model.add_input_layer(shape[0]);
+    for num_noduons in &shape[1..shape.len()-1] {
+        model.add_dense_layer(*num_noduons, inner_function.clone())
+    }
+    model.add_dense_output_layer(*shape.last().unwrap(), vec![String::from(""); *shape.last().unwrap()], output_function)
+}
+
 fn main() {
-    let model: Network = model_from_txt(String::from("Boots_types"), String::from("Boots_weights"), String::from("Boots_connections"));
-    model.model_to_txt(String::from("with_the_fur"));
+    let model: Network = model_from_txt(String::from("with_the_fur_types"), String::from("with_the_fur_weights"), String::from("with_the_fur_connections"));
+    let mut m2 = model.clone();
+    m2.target = m2.target - 1;
+    m2.add_dense_output_noduon(String::from("relu"), String::from("apple"));
+    m2.weights_to_txt(String::from("in_the_club"));
 }
