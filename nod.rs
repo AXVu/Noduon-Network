@@ -65,11 +65,12 @@ get_connections(&self) -> Returns the truth value of noduon connections as a 3d 
 process(&mut self, inputs) -> With the given inputs, do a full process through each layer and return the output of the network.
  */
 
+use core::num;
 use std::{vec, fs, io};
 use std::error::Error;
-use rand::{Rng, random};
+use rand::Rng;
 use std::time;
-use std::io::{Read, BufRead};
+use std::io::BufRead;
 use std::io::prelude::*;
 use std::fs::File;
 use std::path::Path;
@@ -109,10 +110,10 @@ impl Noduon {
     // Set weights for non-inputs, will do nothing if applied to input
     fn set_weights(&mut self, new_weights: &Vec<f64>, mutate: bool, mut_rate: f64) {
         if mutate {
-            let mut rng = rand::thread_rng();
         match self {
             Noduon::Input(_) | Noduon::Bias => {},
             Noduon::Inner1D(f) => {
+                let mut rng = rand::thread_rng();
                 if new_weights.len() == f.weights.len() {
                     for i in 0..new_weights.len() {
                         f.weights[i] = new_weights[i];
@@ -123,6 +124,7 @@ impl Noduon {
                 }
             },
             Noduon::Output1D(f) => {
+                let mut rng = rand::thread_rng();
                 if new_weights.len() == f.weights.len() {
                     for i in 0..new_weights.len() {
                         f.weights[i] = new_weights[i];
@@ -153,17 +155,45 @@ impl Noduon {
     }
 
     // Sets connections for non-inputs, will do nothing if applied to input
-    fn set_connections(&mut self, new_connections: &Vec<bool>) {
-        match self {
-            Noduon::Input(_) | Noduon::Bias => {},
-            Noduon::Inner1D(f) => {
-                if new_connections.len() == f.connections.len() {
-                    f.connections = new_connections.to_vec();
+    fn set_connections(&mut self, new_connections: &Vec<bool>, mutate: bool, mut_rate: f64) {
+        if mutate {
+            match self {
+                Noduon::Input(_) | Noduon::Bias => {},
+                Noduon::Inner1D(f) => {
+                    let mut rng = rand::thread_rng();
+                    if new_connections.len() == f.connections.len() {
+                        for i in 0..new_connections.len() {
+                            f.connections[i] = new_connections[i];
+                            if rng.gen_range(0.0..1.0) < mut_rate{
+                                f.connections[i] = rng.gen_bool(0.5);
+                            }
+                        }
+                    }
+                },
+                Noduon::Output1D(f) => {
+                    let mut rng = rand::thread_rng();
+                    if new_connections.len() == f.connections.len() {
+                        for i in 0..new_connections.len() {
+                            f.connections[i] = new_connections[i];
+                            if rng.gen_range(0.0..1.0) < mut_rate{
+                                f.connections[i] = rng.gen_bool(0.5);
+                            }
+                        }
+                    }
                 }
-            },
-            Noduon::Output1D(f) => {
-                if new_connections.len() == f.connections.len() {
-                    f.connections = new_connections.to_vec();
+            }
+        } else {
+            match self {
+                Noduon::Input(_) | Noduon::Bias => {},
+                Noduon::Inner1D(f) => {
+                    if new_connections.len() == f.connections.len() {
+                        f.connections = new_connections.to_vec();
+                    }
+                },
+                Noduon::Output1D(f) => {
+                    if new_connections.len() == f.connections.len() {
+                        f.connections = new_connections.to_vec();
+                    }
                 }
             }
         }
@@ -352,11 +382,11 @@ impl Layer {
     }
 
     // Sets the connections of each noduon in a given layer
-    fn set_connections(&mut self, new_connections: &Vec<Vec<bool>>) {
+    fn set_connections(&mut self, new_connections: &Vec<Vec<bool>>, mutate: bool, mut_rate: f64) {
         match self {
             Layer::Standard(f) => {
                 for i in 0..f.noduons.len() {
-                    f.noduons[i].set_connections(&new_connections[i]);
+                    f.noduons[i].set_connections(&new_connections[i], mutate, mut_rate);
                 }
             }
         }
@@ -496,7 +526,7 @@ impl Network {
 
         let mut new_layer: Layer = Layer::Standard(Layer1D { noduons: vec![] });
 
-        for i in 0..num_outputs {
+        for _i in 0..num_outputs {
             new_layer.add_dense_output_noduon(previous_size, function.clone());
         }
 
@@ -509,9 +539,9 @@ impl Network {
         self.target += 1
     }
 
-    // Updates input and output num values, assuming the last layer is an output layer
+    // Updates input and output num values, assuming the last layer is an output layer and the first layer has a bias node
     fn update_network(&mut self) {
-        self.num_inputs = self.layers[0].get_size();
+        self.num_inputs = self.layers[0].get_size() - 1;
         self.num_outputs = self.layers[self.layers.len() - 1].get_size();
     }
 
@@ -538,9 +568,9 @@ impl Network {
     }
 
     // Sets connections of each noduon in the network. You should invlude empty values for bias or input values
-    fn set_connections(&mut self, new_connections: Vec<Vec<Vec<bool>>>) {
+    fn set_connections(&mut self, new_connections: Vec<Vec<Vec<bool>>>, mutate: bool, mut_rate: f64) {
         for i in 0..self.layers.len() {
-            self.layers[i].set_connections(&new_connections[i])
+            self.layers[i].set_connections(&new_connections[i], mutate, mut_rate)
         }
     }
 
@@ -631,7 +661,7 @@ impl Network {
     // Take the weights from a text file
     fn weights_from_txt(&mut self, file_name: String) -> Result<(), Box<dyn Error>> {
         let path = file_name + &String::from(".txt");
-        let mut file = File::open(path)?;
+        let file = File::open(path)?;
         let reader = io::BufReader::new(file);
         let mut i: usize = 0;
         let mut j: usize = 0;
@@ -670,7 +700,7 @@ impl Network {
     // Take the connections from a text file
     fn connections_from_txt(&mut self, file_name: String) -> Result<(), Box<dyn Error>> {
         let path = file_name + &String::from(".txt");
-        let mut file = File::open(path)?;
+        let file = File::open(path)?;
         let reader = io::BufReader::new(file);
         let mut i: usize = 0;
         let mut j: usize = 0;
@@ -702,22 +732,23 @@ impl Network {
             }
             i += 1;
         }
-        self.set_connections(new_connections);
+        self.set_connections(new_connections, false, 0.0);
         Ok(())
     }
 
 
     // randomize the weights of the network
     fn randomize(&mut self) {
-        let mut rng = rand::thread_rng();
-
+        for i in 0..self.layers.len() {
+            self.layers[i].randomize();
+        }
     }
 }
 
 // Take the connections from a text file
 fn model_types_from_txt(file_name: String) -> Result<Network, Box<dyn Error>> {
     let path = file_name + &String::from(".txt");
-    let mut file = File::open(path)?;
+    let file = File::open(path)?;
     let reader = io::BufReader::new(file);
     let mut new_network: Network = Network {layers: vec![], num_inputs: 0, num_outputs: 0, target: 0};
     
@@ -736,7 +767,7 @@ fn model_types_from_txt(file_name: String) -> Result<Network, Box<dyn Error>> {
                     num_outputs = num_outputs + 1;
                     &()
                 },
-                default => &()
+                _default => &()
             };
         }
         new_network.lock_layer();
@@ -748,8 +779,8 @@ fn model_types_from_txt(file_name: String) -> Result<Network, Box<dyn Error>> {
 // Takes 3 input files and builds a model from them
 fn model_from_txt(type_file: String, weight_file: String, connection_file: String) -> Network {
     let mut model: Network = model_types_from_txt(type_file).unwrap();
-    model.weights_from_txt(weight_file);
-    model.connections_from_txt(connection_file);
+    let _ = model.weights_from_txt(weight_file);
+    let _ = model.connections_from_txt(connection_file);
     return model;
 }
 
@@ -761,6 +792,7 @@ fn build_typical_model(shape: Vec<usize>, inner_function: String, output_functio
         model.add_dense_layer(*num_noduons, inner_function.clone())
     }
     model.add_dense_output_layer(*shape.last().unwrap(), output_function);
+    model.update_network();
     model
 }
 
@@ -786,16 +818,21 @@ struct Agency {
 
 impl Agency {
     // Reorders the agents based on their performance, highest scoring being put closer to the beginning
-    fn reorder(&mut self, scores: Vec<f64>) {
+    fn reorder(&mut self, scores: Vec<f64>) -> f64 {
         for agent in 0..self.agents.len() {
             self.agents[agent].score = scores[agent];
         }
         self.agents.sort_by(|x,y| y.score.partial_cmp(&x.score).unwrap());
+        self.agents[0].score
     }
 
     // Removes N number of Agents from the bottom of the ranking
-    fn cut_agents(&mut self, num_cut: usize) {
+    fn cut_bottom_agents(&mut self, num_cut: usize) {
         self.agents = self.agents[0..(self.agency_max_size - num_cut)].to_vec();
+    }
+
+    fn cut_top_agents(&mut self, num_cut: usize, exclude_top: usize) {
+        self.agents.splice(exclude_top..num_cut, std::iter::empty());
     }
 
     // Adds copies from root until full
@@ -809,7 +846,110 @@ impl Agency {
         }
     }
 
-    //
+    // Clones with a chance to mutate
+    fn direct_descendant(&mut self, parent: usize, mut_rate: f64) -> Agent {
+        let mut model = self.root.clone();
+        model.set_weights(self.agents[parent].network.get_weights(), true, mut_rate);
+        model.set_connections(self.agents[parent].network.get_connections(), true, mut_rate);
+        Agent { network: model, score: 0.0 }
+    }
+
+    // Takes two agents and crosses their weights, randomly swapping
+    fn crossover(&mut self, parent1: usize, parent2: usize) -> Agent {
+        // Save each weight/connection set for future use
+        let mut p1_weights = self.agents[parent1].network.get_weights();
+        let p2_weights = self.agents[parent2].network.get_weights();
+        let mut p1_connections: Vec<Vec<Vec<bool>>> = self.agents[parent1].network.get_connections();
+        let p2_connections: Vec<Vec<Vec<bool>>> = self.agents[parent2].network.get_connections();
+
+        let mut rng = rand::thread_rng();
+
+        // For each weight and connection either take it from parent 1 or parent 2
+        for layer in 0..p1_weights.len() {
+            for noduon in 0..p1_weights[layer].len() {
+                for weightcon in 0..p1_weights[layer][noduon].len() {
+                    if rng.gen_bool(0.5) {
+                        p1_weights[layer][noduon][weightcon] = p2_weights[layer][noduon][weightcon];
+                    }
+                    
+                    if rng.gen_bool(0.5) {
+                        p1_connections[layer][noduon][weightcon] = p2_connections[layer][noduon][weightcon];
+                    }
+                }
+            }
+        }
+        // Take a model from root and replace with the crossed weights and connections
+        let mut model = self.root.clone();
+        model.set_connections(p1_connections, false, 0.0);
+        model.set_weights(p1_weights, false, 0.0);
+        Agent { network: model, score: 0.0 }
+    }
+
+    // A full generation change. There are parameters for different elements of the transition
+    fn genetic_generation(&mut self, cut_bottom: usize, top_crosses: usize, top_rand_crosses: usize, direct_descendants: usize, elites: usize, mut_rate: f64) {
+        self.cut_bottom_agents(cut_bottom);
+        let num_parents = self.agents.len();
+        let mut cross: usize = 0;
+        // Generate new children as direct descendants from parents with mutation
+        while cross < direct_descendants {
+            for i in 0..num_parents {
+                let child = self.direct_descendant(i, mut_rate);
+                self.agents.push(child);
+                cross += 1;
+                if cross >= direct_descendants {
+                    break;
+                }
+            }
+        }
+        cross = 0;
+        // Generate new children from crossovers with the top performing parents
+        while cross < top_crosses {
+            for i in 0..num_parents {
+                for j in 1..num_parents {
+                    if i != j {
+                        let child = self.crossover(i, j);
+                        self.agents.push(child);
+                        cross += 1;
+                        if cross >= top_crosses {
+                            break;
+                        }
+                    }
+                }
+                if cross >= top_crosses {
+                    break;
+                }
+            }
+        }
+        cross = 0;
+        // Generate new children from crossovers with random parents
+        while cross < top_rand_crosses {
+            let mut rng = rand::thread_rng();
+            for i in 0..num_parents {
+                let j = rng.gen_range(0..num_parents);
+                if i != j {
+                    let child = self.crossover(i, j);
+                    self.agents.push(child);
+                    cross += 1;
+                    if cross >= top_rand_crosses {
+                        break;
+                    }
+                }
+                if cross >= top_rand_crosses {
+                    break;
+                }
+            }
+        }
+        // Cut non-elite parents if keep parents is false
+        
+        // Fill extra slots with random children from root
+        self.fill_from_root(true);
+        // Cut overflow children
+        let extras: i32 = self.agents.len() as i32 - self.agency_max_size as i32;
+        if extras > 0 {
+            self.cut_bottom_agents(extras as usize);
+        }
+    }
+
 
 }
 
@@ -821,17 +961,72 @@ fn build_agency_from_root(root: Network, max_size: usize, randomize_weights: boo
             seeds[i].network.randomize();
         }
     }
-    Agency { agents: seeds, agency_max_size: max_size, root: root }    
+    Agency { agents: seeds, agency_max_size: max_size, root }    
 }
 
+/// END AGENCIES ///////
+///////////////////////
+/// TEST FUNCTIONS ///
+
+fn test_function(v: Vec<f64>) -> Vec<f64> {
+    let mut result: Vec<f64> = vec![];
+    result.push(v[0] + v[1]);
+    result.push(v[2] + v[3]);
+    result
+}
 
 fn main() {
-    let mut model: Network = build_typical_model(vec![2,2,2], String::from("relu"), String::from("sigmoid"));
-    let mut agency = build_agency_from_root(model, 8, true);
-    agency.reorder(vec![0.0,2.0,1.0,5.0,8.0,3.0,2.5,2.0]);
-    println!("{:?}",agency.agents.iter().map(|x| x.score).collect::<Vec<f64>>());
-    agency.cut_agents(4);
-    println!("{:?}",agency.agents.iter().map(|x| x.score).collect::<Vec<f64>>());
-    agency.fill_from_root(true);
-    println!("{:?}",agency.agents.iter().map(|x| x.score).collect::<Vec<f64>>());
+    
+    let model: Network = model_from_txt(String::from("f4_types"), String::from("f4_weights"), String::from("f4_connections"));
+    let mut agency = build_agency_from_root(model, 2000, false);
+    let mut rng = rand::thread_rng();
+    let mut finale: Network;
+
+    for i in 0..10000 {
+        let mut final_results: Vec<f64> = vec![];
+        for j in 0..agency.agents.len() {
+            let mut score = 0.0;
+            for _ in 0..3 {
+                let inputs = vec![rng.gen(), rng.gen(), rng.gen(), rng.gen()];
+                let result = agency.agents[j].network.process(inputs.clone());
+                let actual = test_function(inputs);
+                for k in 0..2 {
+                    score += (actual[k] - result[k]).abs();
+                }
+            }
+            final_results.push(1.0 / (1.0 + (score).exp()));
+        }
+        if i % 50 == 0 {
+            println!("{}",agency.reorder(final_results));
+        } else {
+            agency.reorder(final_results);
+        }
+        if i != 1000 {
+        agency.genetic_generation(1600, 50, 50, 200, 5, 0.01)
+        }
+    }
+    finale = agency.agents[0].network.clone();
+    for i in 0..10 {
+        let inputs = vec![rng.gen(), rng.gen(), rng.gen(), rng.gen()];
+        let res = finale.process(inputs.clone());
+        println!("Sums of {}+{} and {}+{} are predicted to be {:?}",inputs[0],inputs[1],inputs[2],inputs[3],res);
+    }
+    finale.model_to_txt(String::from("f5"));
+    
+    /*
+    let mut model = model_from_txt(String::from("finale_types"), String::from("finale_weights"), String::from("finale_connections"));
+    let mut rng = rand::thread_rng();
+    let mut score = 0.0;
+    for i in 0..3 {
+        let inputs = vec![rng.gen(), rng.gen(), rng.gen(), rng.gen()];
+        let res = model.process(inputs.clone());
+        let actual = test_function(inputs.clone());
+        println!("Sums of {}+{} and {}+{} are predicted to be {:?}",inputs[0],inputs[1],inputs[2],inputs[3],res);
+        for j in 0..2 {
+            score += (res[j] - actual[j]).abs();
+        }
+    }
+    score = 1.0 / (1.0 + score.exp());
+    println!("The score for this test was {}",score)
+    */
 }
