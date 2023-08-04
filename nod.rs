@@ -67,7 +67,7 @@ process(&mut self, inputs) -> With the given inputs, do a full process through e
 
 use std::{vec, fs, io};
 use std::error::Error;
-use rand::Rng;
+use rand::{Rng, random};
 use std::time;
 use std::io::{Read, BufRead};
 use std::io::prelude::*;
@@ -89,7 +89,6 @@ struct InnerNoduon1D {
 
 #[derive(Clone)]
 struct OutputNoduon1D {
-    name: String,
     connections: Vec<bool>,
     weights: Vec<f64>,
     function: String
@@ -108,20 +107,49 @@ enum Noduon {
 
 impl Noduon {
     // Set weights for non-inputs, will do nothing if applied to input
-    fn set_weights(&mut self, new_weights: &Vec<f64>) {
+    fn set_weights(&mut self, new_weights: &Vec<f64>, mutate: bool, mut_rate: f64) {
+        if mutate {
+            let mut rng = rand::thread_rng();
         match self {
             Noduon::Input(_) | Noduon::Bias => {},
             Noduon::Inner1D(f) => {
                 if new_weights.len() == f.weights.len() {
-                    f.weights = new_weights.to_vec();
+                    for i in 0..new_weights.len() {
+                        f.weights[i] = new_weights[i];
+                        if rng.gen_range(0.0..1.0) < mut_rate{
+                            f.weights[i] = f.weights[i] + rng.gen_range(-0.5..=0.5);
+                        }
+                    }
                 }
             },
             Noduon::Output1D(f) => {
                 if new_weights.len() == f.weights.len() {
-                    f.weights = new_weights.to_vec();
+                    for i in 0..new_weights.len() {
+                        f.weights[i] = new_weights[i];
+                        if rng.gen_range(0.0..1.0) < mut_rate{
+                            f.weights[i] = f.weights[i] + rng.gen_range(-0.5..=0.5);
+                        }
+                    }
                 }
             }
         }
+        } else {
+            match self {
+                Noduon::Input(_) | Noduon::Bias => {},
+                Noduon::Inner1D(f) => {
+                    if new_weights.len() == f.weights.len() {
+                        f.weights = new_weights.to_vec();
+                    }
+                },
+                Noduon::Output1D(f) => {
+                    if new_weights.len() == f.weights.len() {
+                        f.weights = new_weights.to_vec();
+                    }
+                }
+            }
+        }
+
+
     }
 
     // Sets connections for non-inputs, will do nothing if applied to input
@@ -313,11 +341,11 @@ impl Layer {
     }
 
     // Sets the weights of each noduon in a given layer
-    fn set_weights(&mut self, new_weights: &Vec<Vec<f64>>) {
+    fn set_weights(&mut self, new_weights: &Vec<Vec<f64>>, mutate: bool, mut_rate: f64) {
         match self {
             Layer::Standard(f) => {
                 for i in 0..f.noduons.len() {
-                    f.noduons[i].set_weights(&new_weights[i]);
+                    f.noduons[i].set_weights(&new_weights[i], mutate, mut_rate);
                 }
             }
         }
@@ -358,14 +386,14 @@ impl Layer {
     }
 
     // Adds a fully connected output noduon to the layer
-    fn add_dense_output_noduon(&mut self, previous_layer_noduons: usize, function: String, name: String) {
+    fn add_dense_output_noduon(&mut self, previous_layer_noduons: usize, function: String) {
         match self {
             Layer::Standard(f) => {
 
                 let mut rng = rand::thread_rng();
                 let weight: Vec<f64> = (0..previous_layer_noduons).map(|_| rng.gen_range(-1.0..=1.0)).collect();
                 let connects: Vec<bool> = (0..previous_layer_noduons).map(|_| true).collect();
-                let new_noduon: Noduon = Noduon::Output1D(OutputNoduon1D{ connections: connects, weights: weight, name: name, function: function });
+                let new_noduon: Noduon = Noduon::Output1D(OutputNoduon1D{ connections: connects, weights: weight, function: function });
                 f.noduons.push(new_noduon);
             }
         }
@@ -425,10 +453,10 @@ impl Network {
     }
 
     // Add dense output noduon to currently targeted layer
-    fn add_dense_output_noduon(&mut self, function: String, name: String) {
+    fn add_dense_output_noduon(&mut self, function: String) {
         if self.target != 0 {
             let previous_size = self.layers[self.target - 1].get_size();
-            self.layers[self.target].add_dense_output_noduon(previous_size, function, name);
+            self.layers[self.target].add_dense_output_noduon(previous_size, function);
         }
     }
 
@@ -463,13 +491,13 @@ impl Network {
     }
 
     // Add a fully connected layer of outputs
-    fn add_dense_output_layer(&mut self, num_outputs: usize, output_names: Vec<String>, function: String) {
+    fn add_dense_output_layer(&mut self, num_outputs: usize, function: String) {
         let previous_size: usize = self.layers[self.layers.len() - 1].get_size();
 
         let mut new_layer: Layer = Layer::Standard(Layer1D { noduons: vec![] });
 
         for i in 0..num_outputs {
-            new_layer.add_dense_output_noduon(previous_size, function.clone(), output_names[i].clone());
+            new_layer.add_dense_output_noduon(previous_size, function.clone());
         }
 
         self.add_layer(new_layer);
@@ -503,9 +531,9 @@ impl Network {
     }
 
     // Sets weights of each noduon in the network. You should include empty values for bias or input values.
-    fn set_weights(&mut self, new_weights: Vec<Vec<Vec<f64>>>) {
+    fn set_weights(&mut self, new_weights: Vec<Vec<Vec<f64>>>, mutate: bool, mut_rate: f64) {
         for i in 0..self.layers.len() {
-            self.layers[i].set_weights(&new_weights[i]);
+            self.layers[i].set_weights(&new_weights[i], mutate, mut_rate);
         }
     }
 
@@ -635,7 +663,7 @@ impl Network {
             }
             i += 1;
         }
-        self.set_weights(new_weights);
+        self.set_weights(new_weights, false, 0.0);
         Ok(())
     }
 
@@ -704,7 +732,7 @@ fn model_types_from_txt(file_name: String) -> Result<Network, Box<dyn Error>> {
                 "inner1d" => &new_network.add_dense_noduon(String::from("relu")),
                 "bias" => &new_network.add_noduon(Noduon::Bias),
                 "output1d" => {
-                    new_network.add_dense_output_noduon(String::from("relu"), num_outputs.to_string());
+                    new_network.add_dense_output_noduon(String::from("relu"));
                     num_outputs = num_outputs + 1;
                     &()
                 },
@@ -726,19 +754,84 @@ fn model_from_txt(type_file: String, weight_file: String, connection_file: Strin
 }
 
 // Builds a sequential dense model from the given vector. The 0th element is the num inputs the last element is the num outputs
-fn build_typical_model(shape: Vec<usize>, inner_function: String, output_function: String) {
+fn build_typical_model(shape: Vec<usize>, inner_function: String, output_function: String) -> Network {
     let mut model: Network = Network { layers: vec![], num_inputs: 0, num_outputs: 0, target: 0 };
     model.add_input_layer(shape[0]);
     for num_noduons in &shape[1..shape.len()-1] {
         model.add_dense_layer(*num_noduons, inner_function.clone())
     }
-    model.add_dense_output_layer(*shape.last().unwrap(), vec![String::from(""); *shape.last().unwrap()], output_function)
+    model.add_dense_output_layer(*shape.last().unwrap(), output_function);
+    model
 }
 
+//// End Network
+/////////////////
+//// Start Agencies
+
+// An agent is a Network with a fitness score
+#[derive(Clone)]
+struct Agent {
+    network: Network,
+    score: f64
+}
+
+
+// An agency is a collection of agents (Networks) designed to help with reinforcement learning tasks, also referred to as generation
+#[derive(Clone)]
+struct Agency {
+    agents: Vec<Agent>,
+    agency_max_size: usize,
+    root: Network
+}
+
+impl Agency {
+    // Reorders the agents based on their performance, highest scoring being put closer to the beginning
+    fn reorder(&mut self, scores: Vec<f64>) {
+        for agent in 0..self.agents.len() {
+            self.agents[agent].score = scores[agent];
+        }
+        self.agents.sort_by(|x,y| y.score.partial_cmp(&x.score).unwrap());
+    }
+
+    // Removes N number of Agents from the bottom of the ranking
+    fn cut_agents(&mut self, num_cut: usize) {
+        self.agents = self.agents[0..(self.agency_max_size - num_cut)].to_vec();
+    }
+
+    // Adds copies from root until full
+    fn fill_from_root(&mut self, randomize_weights: bool) {
+        for _ in 0..(self.agency_max_size - self.agents.len()) {
+            let mut agent = Agent {network: self.root.clone(), score: 0.0};
+            if randomize_weights {
+                agent.network.randomize();
+            }
+            self.agents.push(agent);
+        }
+    }
+
+    //
+
+}
+
+// Build an Agency of size N by generating random weights from the root Network
+fn build_agency_from_root(root: Network, max_size: usize, randomize_weights: bool) -> Agency {
+    let mut seeds: Vec<Agent> = (0..max_size).map(|_| Agent {network: root.clone(), score: 0.0}).collect();
+    if randomize_weights {
+        for i in 0..seeds.len() {
+            seeds[i].network.randomize();
+        }
+    }
+    Agency { agents: seeds, agency_max_size: max_size, root: root }    
+}
+
+
 fn main() {
-    let model: Network = model_from_txt(String::from("with_the_fur_types"), String::from("with_the_fur_weights"), String::from("with_the_fur_connections"));
-    let mut m2 = model.clone();
-    m2.target = m2.target - 1;
-    m2.add_dense_output_noduon(String::from("relu"), String::from("apple"));
-    m2.weights_to_txt(String::from("in_the_club"));
+    let mut model: Network = build_typical_model(vec![2,2,2], String::from("relu"), String::from("sigmoid"));
+    let mut agency = build_agency_from_root(model, 8, true);
+    agency.reorder(vec![0.0,2.0,1.0,5.0,8.0,3.0,2.5,2.0]);
+    println!("{:?}",agency.agents.iter().map(|x| x.score).collect::<Vec<f64>>());
+    agency.cut_agents(4);
+    println!("{:?}",agency.agents.iter().map(|x| x.score).collect::<Vec<f64>>());
+    agency.fill_from_root(true);
+    println!("{:?}",agency.agents.iter().map(|x| x.score).collect::<Vec<f64>>());
 }
