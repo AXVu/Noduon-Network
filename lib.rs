@@ -200,7 +200,7 @@ impl Noduon {
     fn set_value(&mut self, new_value: f64) {
         match self {
             Noduon::Input(f) => f.value = new_value,
-            default => ()
+            _ => ()
         }
     }
 
@@ -232,6 +232,15 @@ impl Noduon {
         }
     }
 
+    fn get_function(&self) -> String {
+        match self {
+            Noduon::Input(_) => String::from("_"),
+            Noduon::Inner1D(f) => f.function.clone(),
+            Noduon::Output1D(f) => f.function.clone(),
+            Noduon::Bias => String::from("_")
+        }
+    }
+    
     fn randomize(&mut self) {
         match self {
             Noduon::Bias | Noduon::Input(_) => (),
@@ -271,7 +280,7 @@ impl Noduon {
                         } else {
                             0.0
                         }},
-                    "sigmod" => 1.0 / (1.0 + (-total).exp()),
+                    "sigmoid" => 1.0 / (1.0 + (-total).exp()),
                     _default => 0.0
                  };
                  total
@@ -301,6 +310,28 @@ impl Noduon {
         }
     }
 
+
+}
+
+
+// Helper function for gradient
+pub fn activation_derivative(num: f64, function: &String) -> f64 {
+    match function.as_str() {
+        "relu" => {
+            if num > 0.0 {
+                return 1.0
+            } else {
+                return 0.0
+            }
+        },
+        "sigmoid" => {
+            (1.0 / (1.0 + (-num).exp())) * (1.0 - (1.0 / (1.0 + (-num).exp())))
+        },
+        "tanh" => {
+            1.0 - num.tanh().powi(2)
+        },
+        _ => 1.0
+    }
 }
 
 // End of Noduon section
@@ -353,6 +384,12 @@ impl Layer {
     fn get_connections(&self) -> Vec<Vec<bool>> {
         match self {
             Layer::Standard(f) => f.noduons.iter().map(|x| x.get_connections()).collect()
+        }
+    }
+
+    fn get_functions(&self) -> Vec<String> {
+        match self {
+            Layer::Standard(f) => f.noduons.iter().map(|x| x.get_function()).collect()
         }
     }
 
@@ -557,6 +594,10 @@ impl Network {
         self.layers.iter().map(|x| x.get_connections()).collect()
     }
 
+    pub fn get_functions(&self) -> Vec<Vec<String>> {
+        self.layers.iter().map(|x| x.get_functions()).collect()
+    }
+
     // Sets weights of each noduon in the network. You should include empty values for bias or input values.
     pub fn set_weights(&mut self, new_weights: Vec<Vec<Vec<f64>>>, mutate: bool, mut_rate: f64, mut_degree: f64) {
         for i in 0..self.layers.len() {
@@ -585,6 +626,130 @@ impl Network {
 
         return results[self.layers.len()].clone();
     }
+
+    // Does a full process but also returns all intermediate layer results
+    pub fn forward_pass(&mut self, inputs: Vec<f64>) -> Vec<Vec<f64>> {
+
+        let mut results: Vec<Vec<f64>> = vec![];
+
+        if inputs.len() == self.num_inputs {
+            self.layers[0].set_values(inputs.clone());
+            results.push(inputs);
+        } else {
+            return vec![];
+        }
+
+        for i in 0..self.layers.len() {
+            results.push(self.layers[i].process(results[i].clone()));
+        }
+
+        results.remove(0);
+
+        return results;
+
+    }
+
+    pub fn loss(&mut self, predicted: Vec<f64>, actual: Vec<f64>, function: String) -> f64 {
+
+        match function.as_str() {
+            "mse" => {
+                let mut total = 0.0;
+                for i in 0..predicted.len() {
+                    total += (predicted[i] - actual[i]).powi(2);
+                }
+                total / predicted.len() as f64
+            },
+            "mae" => {
+                let mut total: f64 = 0.0;
+                for i in 0..predicted.len() {
+                    total += (predicted[i] - actual[i]).abs();
+                }
+                total / predicted.len() as f64
+            },
+            _ => 1.0
+
+        }
+
+    }
+
+    // Computes the gradients of all weights based on the output and loss function
+    pub fn backwards_pass(&mut self, forward_pass: Vec<Vec<f64>>, actual: Vec<f64>, loss_function: String) -> Vec<Vec<Vec<f64>>> {
+
+        // Declare the necessary variables
+        let mut derivatives: Vec<Vec<f64>> = vec![];
+        let mut gradients: Vec<Vec<Vec<f64>>> = vec![];
+        let weights: Vec<Vec<Vec<f64>>> = self.get_weights();
+        let connections: Vec<Vec<Vec<bool>>> = self.get_connections();
+        let functions: Vec<Vec<String>> = self.get_functions();
+
+        println!("{:?}", weights);
+
+        // Extract outputs for simplicity
+        let outputs = forward_pass.last().unwrap().clone();
+
+        // Compute the output loss derivative
+        let out_loss_derivative: Vec<f64> = match loss_function.as_str() {
+            "mse" => {
+                let mut derivates: Vec<f64> = vec![];
+                for i in 0..outputs.len() {
+                    derivates.push(outputs[i] - actual[i])
+                }
+                derivates
+            },
+            _ => {
+                let derivates: Vec<f64> = outputs.iter().map(|_| 0.0).collect();
+                derivates
+            }
+        };
+
+        derivatives.push(out_loss_derivative);
+
+        // Iterate over each layer
+        for i in (0..self.layers.len()).rev() {
+            let mut layer_gradients: Vec<Vec<f64>> = vec![];
+            let mut layer_derivatives: Vec<f64> = vec![];
+            // Iterate over each noduon
+            for j in 0..self.layers[i].get_size() {
+                let mut noduon_gradients: Vec<f64> = vec![];
+                let mut rld: f64 = 0.0;
+
+                // Calculate the rld (relative loss derivative) for the noduon based on weights of its forwards connections
+                let cap: usize;
+                if i != self.layers.len() - 1 {
+                    cap = weights[i + 1].len();
+                    for k in 0..cap {
+                        if connections[i + 1][k].contains(&true) {
+                            rld += (derivatives[0][k] * weights[i + 1][k][j]) as f64
+                        }
+                    }
+                    
+                    // Compute the value derivative for this noduon
+
+                    let my_derivative: f64 = rld * activation_derivative(forward_pass[i][j], &functions[i][j]);
+                    layer_derivatives.push(my_derivative);
+
+                    // Calculate the gradient from each backwards result and my_derivative
+                    for k in 0..weights[i][j].len() {
+                        noduon_gradients.push(my_derivative * forward_pass[i - 1][k]);
+                    }
+                } else {
+                    for k in 0..weights[i][j].len() {
+                        noduon_gradients.push(derivatives[0][j] * forward_pass[i - 1][k]);
+                    }
+                }
+                layer_gradients.push(noduon_gradients);
+            }
+            gradients.insert(0, layer_gradients);
+            if i != self.layers.len() - 1 {
+                derivatives.insert(0, layer_derivatives);
+            }
+        }
+
+        gradients
+
+    }
+
+
 
     // Converts the weights of a network into a txt with a name specified by the file_name parameter
     fn weights_to_txt(&self, file_name: String) -> Result<(), Box<dyn Error>> {
@@ -799,18 +964,18 @@ pub fn build_typical_model(shape: Vec<usize>, inner_function: String, output_fun
 
 // An agent is a Network with a fitness score
 #[derive(Clone)]
-struct Agent {
-    network: Network,
-    score: f64
+pub struct Agent {
+    pub network: Network,
+    pub score: f64
 }
 
 
 // An agency is a collection of agents (Networks) designed to help with reinforcement learning tasks, also referred to as generation
 #[derive(Clone)]
 pub struct Agency {
-    agents: Vec<Agent>,
-    agency_max_size: usize,
-    root: Network
+    pub agents: Vec<Agent>,
+    pub agency_max_size: usize,
+    pub root: Network
 }
 
 impl Agency {
@@ -936,8 +1101,8 @@ impl Agency {
                 }
             }
         }
-        // Cut non-elite parents if keep parents is false
-        
+        // Cut non-elite parents
+        self.cut_top_agents(num_parents, elites);
         // Fill extra slots with random children from root
         self.fill_from_root(true);
         // Cut overflow children
@@ -948,7 +1113,7 @@ impl Agency {
     }
 
     pub fn networks_iter(&self) -> impl Iterator<Item = Network> {
-        let mut nets: Vec<Network> = self.agents.iter().map(|x| x.network.clone()).collect();
+        let nets: Vec<Network> = self.agents.iter().map(|x| x.network.clone()).collect();
         nets.into_iter()
     }
 
@@ -984,7 +1149,7 @@ fn main() {
     let mut rng = rand::thread_rng();
     let mut finale: Network;
 
-    for i in 0..10000 {
+    for i in 0..100 {
         let mut final_results: Vec<f64> = vec![];
         for j in 0..agency.agents.len() {
             let mut score = 0.0;
@@ -1008,7 +1173,7 @@ fn main() {
         }
     }
     finale = agency.agents[0].network.clone();
-    for i in 0..10 {
+    for _ in 0..10 {
         let inputs = vec![rng.gen(), rng.gen(), rng.gen(), rng.gen()];
         let res = finale.process(inputs.clone());
         println!("Sums of {}+{} and {}+{} are predicted to be {:?}",inputs[0],inputs[1],inputs[2],inputs[3],res);
