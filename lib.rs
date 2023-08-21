@@ -151,6 +151,27 @@ impl Noduon {
 
     }
 
+    // Accepts a vector of weight changes and applies them to this Noduon's weights
+    pub fn change_weights(&mut self, weight_changes: &Vec<f64>) {
+        match self {
+            Noduon::Input(_) | Noduon::Bias => {},
+            Noduon::Inner1D(f) => {
+                if weight_changes.len() == f.weights.len() {
+                    for i in 0..weight_changes.len() {
+                        f.weights[i] += weight_changes[i]
+                    }
+                }
+            },
+            Noduon::Output1D(f) => {
+                if weight_changes.len() == f.weights.len() {
+                    for i in 0..weight_changes.len() {
+                        f.weights[i] += weight_changes[i]
+                    }
+                }
+            }
+        }
+    }
+
     // Sets connections for non-inputs, will do nothing if applied to input
     fn set_connections(&mut self, new_connections: &Vec<bool>, mutate: bool, mut_rate: f64) {
         if mutate {
@@ -232,6 +253,7 @@ impl Noduon {
         }
     }
 
+    // Returns the activation function of this Noduon
     fn get_function(&self) -> String {
         match self {
             Noduon::Input(_) => String::from("_"),
@@ -241,6 +263,7 @@ impl Noduon {
         }
     }
     
+    // Randomizes the weights of this Noduon
     fn randomize(&mut self) {
         match self {
             Noduon::Bias | Noduon::Input(_) => (),
@@ -339,12 +362,12 @@ pub fn activation_derivative(num: f64, function: &String) -> f64 {
 // Start of Layer section
 
 #[derive(Clone)]
-struct Layer1D {
+pub struct Layer1D {
     noduons: Vec<Noduon>
 }
 
 #[derive(Clone)]
-enum Layer {
+pub enum Layer {
     Standard(Layer1D)
 }
 
@@ -387,6 +410,7 @@ impl Layer {
         }
     }
 
+    // Returns the activation functions of each Nouon in layer as a vector
     fn get_functions(&self) -> Vec<String> {
         match self {
             Layer::Standard(f) => f.noduons.iter().map(|x| x.get_function()).collect()
@@ -410,6 +434,17 @@ impl Layer {
             Layer::Standard(f) => {
                 for i in 0..f.noduons.len() {
                     f.noduons[i].set_weights(&new_weights[i], mutate, mut_rate, mut_degree);
+                }
+            }
+        }
+    }
+
+    // Changes the weights of each noduon in this layer
+    fn change_weights(&mut self, weight_changes: &Vec<Vec<f64>>) {
+        match self {
+            Layer::Standard(f) => {
+                for i in 0..f.noduons.len() {
+                    f.noduons[i].change_weights(&weight_changes[i])
                 }
             }
         }
@@ -525,7 +560,7 @@ impl Network {
     }
 
     // Add built layer to network
-    fn add_layer(&mut self, layer: Layer) {
+    pub fn add_layer(&mut self, layer: Layer) {
         self.layers.push(layer)
     }
 
@@ -605,6 +640,13 @@ impl Network {
         }
     }
 
+    // Changes weights of each noduon in the network. Include empty values for bias or input noduons.
+    pub fn change_weights(&mut self, weight_changes: Vec<Vec<Vec<f64>>>) {
+        for i in 0..self.layers.len() {
+            self.layers[i].change_weights(&weight_changes[i])
+        }
+    }
+
     // Sets connections of each noduon in the network. You should invlude empty values for bias or input values
     pub fn set_connections(&mut self, new_connections: Vec<Vec<Vec<bool>>>, mutate: bool, mut_rate: f64) {
         for i in 0..self.layers.len() {
@@ -649,6 +691,7 @@ impl Network {
 
     }
 
+    // Calculates the loss function
     pub fn loss(&mut self, predicted: Vec<f64>, actual: Vec<f64>, function: String) -> f64 {
 
         match function.as_str() {
@@ -681,8 +724,6 @@ impl Network {
         let weights: Vec<Vec<Vec<f64>>> = self.get_weights();
         let connections: Vec<Vec<Vec<bool>>> = self.get_connections();
         let functions: Vec<Vec<String>> = self.get_functions();
-
-        println!("{:?}", weights);
 
         // Extract outputs for simplicity
         let outputs = forward_pass.last().unwrap().clone();
@@ -718,7 +759,7 @@ impl Network {
                 if i != self.layers.len() - 1 {
                     cap = weights[i + 1].len();
                     for k in 0..cap {
-                        if connections[i + 1][k].contains(&true) {
+                        if connections[i + 1][k].contains(&true) && connections[i + 1][k][j] {
                             rld += (derivatives[0][k] * weights[i + 1][k][j]) as f64
                         }
                     }
@@ -900,7 +941,7 @@ impl Network {
 
 
     // randomize the weights of the network
-    fn randomize(&mut self) {
+    pub fn randomize(&mut self) {
         for i in 0..self.layers.len() {
             self.layers[i].randomize();
         }
@@ -1133,67 +1174,49 @@ pub fn build_agency_from_root(root: Network, max_size: usize, randomize_weights:
 
 /// END AGENCIES ///////
 ///////////////////////
-/// TEST FUNCTIONS ///
+/// START TUTORS /////
 
-fn test_function(v: Vec<f64>) -> Vec<f64> {
-    let mut result: Vec<f64> = vec![];
-    result.push(v[0] + v[1]);
-    result.push(v[2] + v[3]);
-    result
+pub struct Tutor {
+    pub gradients: Vec<Vec<Vec<f64>>>,
+    pub learning_coefficient: f64,
+    pub other_parameters: [f64; 4],
+    pub pupil: Network
 }
 
-fn main() {
-    
-    let model: Network = model_from_txt(String::from("f4_types"), String::from("f4_weights"), String::from("f4_connections"), String::from("relu"), String::from("relu"));
-    let mut agency = build_agency_from_root(model, 2000, false);
-    let mut rng = rand::thread_rng();
-    let mut finale: Network;
+pub fn build_default_tutor(network: Network) -> Tutor {
+    Tutor { gradients: vec![], learning_coefficient: 0.001, other_parameters: [0.0, 0.0, 0.0, 0.0], pupil: network }
+}
 
-    for i in 0..100 {
-        let mut final_results: Vec<f64> = vec![];
-        for j in 0..agency.agents.len() {
-            let mut score = 0.0;
-            for _ in 0..3 {
-                let inputs = vec![rng.gen(), rng.gen(), rng.gen(), rng.gen()];
-                let result = agency.agents[j].network.process(inputs.clone());
-                let actual = test_function(inputs);
-                for k in 0..2 {
-                    score += (actual[k] - result[k]).abs();
+impl Tutor {
+
+    // Apply basic gradient descent to the tutor's pupil
+    pub fn gradient_descent(&mut self, mut gradients: Vec<Vec<Vec<f64>>>) {
+
+        // Update gradients to hold the new gradients
+        self.gradients = gradients.clone();
+
+        // Iterate through the gradients, mutliplying by the negative learning coefficient
+        for i in 0..gradients.len() {
+            for j in 0..gradients[i].len() {
+                for k in 0..gradients[i][j].len() {
+                    gradients[i][j][k] *= self.learning_coefficient * -1.0
                 }
             }
-            final_results.push(1.0 / (1.0 + (score).exp()));
         }
-        if i % 50 == 0 {
-            println!("{}",agency.reorder(final_results));
-        } else {
-            agency.reorder(final_results);
-        }
-        if i != 1000 {
-        agency.genetic_generation(1600, 50, 50, 200, 5, 0.01, 0.5)
-        }
+
+        // Change each weight by the determined amount
+        self.pupil.change_weights(gradients)
+
     }
-    finale = agency.agents[0].network.clone();
-    for _ in 0..10 {
-        let inputs = vec![rng.gen(), rng.gen(), rng.gen(), rng.gen()];
-        let res = finale.process(inputs.clone());
-        println!("Sums of {}+{} and {}+{} are predicted to be {:?}",inputs[0],inputs[1],inputs[2],inputs[3],res);
-    }
-    finale.model_to_txt(String::from("f5"));
-    
-    /*
-    let mut model = model_from_txt(String::from("finale_types"), String::from("finale_weights"), String::from("finale_connections"));
-    let mut rng = rand::thread_rng();
-    let mut score = 0.0;
-    for i in 0..3 {
-        let inputs = vec![rng.gen(), rng.gen(), rng.gen(), rng.gen()];
-        let res = model.process(inputs.clone());
-        let actual = test_function(inputs.clone());
-        println!("Sums of {}+{} and {}+{} are predicted to be {:?}",inputs[0],inputs[1],inputs[2],inputs[3],res);
-        for j in 0..2 {
-            score += (res[j] - actual[j]).abs();
-        }
-    }
-    score = 1.0 / (1.0 + score.exp());
-    println!("The score for this test was {}",score)
-    */
+
+
+
+}
+
+/// END TUTORS /////////
+///////////////////////
+/// 
+
+pub fn main() {
+    println!("Wheee");
 }
