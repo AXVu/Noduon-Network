@@ -72,6 +72,16 @@ use std::io::prelude::*;
 use std::fs::File;
 use std::path::Path;
 
+// Activation function enum
+#[derive(Clone)]
+pub enum AF {
+    Linear,
+    ReLU,
+    Sigmoid,
+    Tanh,
+    NA
+}
+
 #[derive(Clone)]
 pub struct InputNoduon {
     value: f64
@@ -82,14 +92,14 @@ pub struct InputNoduon {
 pub struct InnerNoduon1D {
     connections: Vec<bool>,
     weights: Vec<f64>,
-    function: String
+    function: AF
 }
 
 #[derive(Clone)]
 pub struct OutputNoduon1D {
     connections: Vec<bool>,
     weights: Vec<f64>,
-    function: String
+    function: AF
 }
 
 
@@ -254,12 +264,12 @@ impl Noduon {
     }
 
     // Returns the activation function of this Noduon
-    fn get_function(&self) -> String {
+    fn get_function(&self) -> AF {
         match self {
-            Noduon::Input(_) => String::from("_"),
+            Noduon::Input(_) => AF::NA,
             Noduon::Inner1D(f) => f.function.clone(),
             Noduon::Output1D(f) => f.function.clone(),
-            Noduon::Bias => String::from("_")
+            Noduon::Bias => AF::NA
         }
     }
     
@@ -295,16 +305,16 @@ impl Noduon {
                     }
                 }
 
-                total = match f.function.as_str() {
-                    "tanh" => total.tanh(),
-                    "relu" => {
+                total = match f.function {
+                    AF::Tanh => total.tanh(),
+                    AF::ReLU => {
                         if total > 0.0 {
                             total
                         } else {
                             0.0
                         }},
-                    "sigmoid" => 1.0 / (1.0 + (-total).exp()),
-                    _default => 0.0
+                    AF::Sigmoid => 1.0 / (1.0 + (-total).exp()),
+                    _ => 0.0
                  };
                  total
             },
@@ -316,16 +326,16 @@ impl Noduon {
                     }
                 }
 
-                total = match f.function.as_str() {
-                    "tanh" => total.tanh(),
-                    "relu" => {
+                total = match f.function {
+                    AF::Tanh => total.tanh(),
+                    AF::ReLU => {
                         if total > 0.0 {
                             total
                         } else {
                             0.0
                         }},
-                    "sigmoid" => 1.0 / (1.0 + (-total).exp()),
-                    _default => total
+                    AF::Sigmoid => 1.0 / (1.0 + (-total).exp()),
+                    _ => total
                  };
 
                 total
@@ -338,19 +348,19 @@ impl Noduon {
 
 
 // Helper function for gradient
-pub fn activation_derivative(num: f64, function: &String) -> f64 {
-    match function.as_str() {
-        "relu" => {
+pub fn activation_derivative(num: f64, function: &AF) -> f64 {
+    match function {
+        AF::ReLU => {
             if num > 0.0 {
                 return 1.0
             } else {
                 return 0.0
             }
         },
-        "sigmoid" => {
+        AF::Sigmoid => {
             (1.0 / (1.0 + (-num).exp())) * (1.0 - (1.0 / (1.0 + (-num).exp())))
         },
-        "tanh" => {
+        AF::Tanh => {
             1.0 - num.tanh().powi(2)
         },
         _ => 1.0
@@ -373,7 +383,7 @@ pub enum Layer {
 
 impl Layer {
     // The standard process of a layer, taking the previous layer's output and outputting the new layer
-    fn process(&self, past_layer: Vec<f64>) -> Vec<f64> {
+    fn process(&self, past_layer: &Vec<f64>) -> Vec<f64> {
         match self {
             Layer::Standard(f) => {
 
@@ -411,14 +421,14 @@ impl Layer {
     }
 
     // Returns the activation functions of each Nouon in layer as a vector
-    fn get_functions(&self) -> Vec<String> {
+    fn get_functions(&self) -> Vec<AF> {
         match self {
             Layer::Standard(f) => f.noduons.iter().map(|x| x.get_function()).collect()
         }
     }
 
     // Sets the value of each input noduon
-    fn set_values(&mut self, values: Vec<f64>) {
+    fn set_values(&mut self, values: &Vec<f64>) {
         match self {
             Layer::Standard(f) => {
                 for i in 0..values.len() {
@@ -471,7 +481,7 @@ impl Layer {
     }
 
     // Adds a fully connected noduon to the layer
-    fn add_dense_noduon(&mut self, previous_layer_noduons: usize, function: String) {
+    fn add_dense_noduon(&mut self, previous_layer_noduons: usize, function: AF) {
         match self {
             Layer::Standard(f) => {
 
@@ -485,7 +495,7 @@ impl Layer {
     }
 
     // Adds a fully connected output noduon to the layer
-    fn add_dense_output_noduon(&mut self, previous_layer_noduons: usize, function: String) {
+    fn add_dense_output_noduon(&mut self, previous_layer_noduons: usize, function: AF) {
         match self {
             Layer::Standard(f) => {
 
@@ -544,7 +554,7 @@ impl Network {
     }
 
     // Add dense noduon to currently targeted layer
-    pub fn add_dense_noduon(&mut self, function: String) {
+    pub fn add_dense_noduon(&mut self, function: AF) {
         if self.target != 0 {
             let previous_size = self.layers[self.target - 1].get_size();
             self.layers[self.target].add_dense_noduon(previous_size, function)
@@ -552,7 +562,7 @@ impl Network {
     }
 
     // Add dense output noduon to currently targeted layer
-    pub fn add_dense_output_noduon(&mut self, function: String) {
+    pub fn add_dense_output_noduon(&mut self, function: AF) {
         if self.target != 0 {
             let previous_size = self.layers[self.target - 1].get_size();
             self.layers[self.target].add_dense_output_noduon(previous_size, function);
@@ -576,7 +586,7 @@ impl Network {
     }
 
     // Add a dense layer to network
-    pub fn add_dense_layer(&mut self, num_noduons: usize, function: String) {
+    pub fn add_dense_layer(&mut self, num_noduons: usize, function: AF) {
         let previous_size: usize = self.layers[self.layers.len() - 1].get_size();
 
         let mut new_layer: Layer = Layer::Standard(Layer1D { noduons: vec![] });
@@ -590,7 +600,7 @@ impl Network {
     }
 
     // Add a fully connected layer of outputs
-    pub fn add_dense_output_layer(&mut self, num_outputs: usize, function: String) {
+    pub fn add_dense_output_layer(&mut self, num_outputs: usize, function: AF) {
         let previous_size: usize = self.layers[self.layers.len() - 1].get_size();
 
         let mut new_layer: Layer = Layer::Standard(Layer1D { noduons: vec![] });
@@ -629,7 +639,7 @@ impl Network {
         self.layers.iter().map(|x| x.get_connections()).collect()
     }
 
-    pub fn get_functions(&self) -> Vec<Vec<String>> {
+    pub fn get_functions(&self) -> Vec<Vec<AF>> {
         self.layers.iter().map(|x| x.get_functions()).collect()
     }
 
@@ -655,7 +665,7 @@ impl Network {
     }
 
     // Takes inputs, passing each layer's result to each other. 
-    pub fn process(&mut self, inputs: Vec<f64>) -> Vec<f64> {
+    pub fn process(&mut self, inputs: &Vec<f64>) -> Vec<f64> {
 
         if inputs.len() == self.num_inputs {
             self.layers[0].set_values(inputs);
@@ -663,29 +673,28 @@ impl Network {
 
         let mut results: Vec<Vec<f64>> = vec![vec![]];
         for i in 0..self.layers.len() {
-            results.push(self.layers[i].process(results[i].clone()));
+            results.push(self.layers[i].process(&results[i]));
         }
 
         return results[self.layers.len()].clone();
     }
 
     // Does a full process but also returns all intermediate layer results
-    pub fn forward_pass(&mut self, inputs: Vec<f64>) -> Vec<Vec<f64>> {
+    pub fn forward_pass(&mut self, inputs: &Vec<f64>) -> Vec<Vec<f64>> {
 
         let mut results: Vec<Vec<f64>> = vec![];
 
         if inputs.len() == self.num_inputs {
-            self.layers[0].set_values(inputs.clone());
-            results.push(inputs);
+            self.layers[0].set_values(inputs);
         } else {
             return vec![];
         }
 
-        for i in 0..self.layers.len() {
-            results.push(self.layers[i].process(results[i].clone()));
-        }
+        results.push(self.layers[0].process(&vec![]));
 
-        results.remove(0);
+        for i in 1..self.layers.len() {
+            results.push(self.layers[i].process(&results[i-1]));
+        }
 
         return results;
 
@@ -723,7 +732,7 @@ impl Network {
         let mut gradients: Vec<Vec<Vec<f64>>> = vec![];
         let weights: Vec<Vec<Vec<f64>>> = self.get_weights();
         let connections: Vec<Vec<Vec<bool>>> = self.get_connections();
-        let functions: Vec<Vec<String>> = self.get_functions();
+        let functions: Vec<Vec<AF>> = self.get_functions();
 
         // Extract outputs for simplicity
         let outputs = forward_pass.last().unwrap().clone();
@@ -949,7 +958,7 @@ impl Network {
 }
 
 // Take the connections from a text file
-fn model_types_from_txt(file_name: String, inner_function: String, output_function: String) -> Result<Network, Box<dyn Error>> {
+fn model_types_from_txt(file_name: String, inner_function: AF, output_function: AF) -> Result<Network, Box<dyn Error>> {
     let path = file_name + &String::from(".txt");
     let file = File::open(path)?;
     let reader = io::BufReader::new(file);
@@ -980,7 +989,7 @@ fn model_types_from_txt(file_name: String, inner_function: String, output_functi
 }
 
 // Takes 3 input files and builds a model from them
-pub fn model_from_txt(type_file: String, weight_file: String, connection_file: String, inner_function: String, output_function: String) -> Network {
+pub fn model_from_txt(type_file: String, weight_file: String, connection_file: String, inner_function: AF, output_function: AF) -> Network {
     let mut model: Network = model_types_from_txt(type_file, inner_function, output_function).unwrap();
     let _ = model.weights_from_txt(weight_file);
     let _ = model.connections_from_txt(connection_file);
@@ -988,7 +997,7 @@ pub fn model_from_txt(type_file: String, weight_file: String, connection_file: S
 }
 
 // Builds a sequential dense model from the given vector. The 0th element is the num inputs the last element is the num outputs
-pub fn build_typical_model(shape: Vec<usize>, inner_function: String, output_function: String) -> Network {
+pub fn build_typical_model(shape: Vec<usize>, inner_function: AF, output_function: AF) -> Network {
     let mut model: Network = Network { layers: vec![], num_inputs: 0, num_outputs: 0, target: 0 };
     model.add_input_layer(shape[0]);
     for num_noduons in &shape[1..shape.len()-1] {
@@ -1209,7 +1218,32 @@ impl Tutor {
 
     }
 
+    // Preform a complete training step on a batch of data
+    pub fn batch_train_gd(&mut self, train_features: Vec<Vec<f64>>, train_labels: Vec<Vec<f64>>, loss_function:String) {
 
+        let mut gradients:Vec<Vec<Vec<f64>>> = self.pupil.get_weights().iter().map(|x| x.iter().map(|x| x.iter().map(|_| 0.0).collect()).collect()).collect();
+        let mut gradient_sets: Vec<Vec<Vec<Vec<f64>>>> = vec![];
+
+        for i in 0..train_features.len() {
+            let forward = self.pupil.forward_pass(&train_features[i]);
+            let backward = self.pupil.backwards_pass(forward, train_labels[i].clone(), loss_function.clone());
+            gradient_sets.push(backward)
+        }
+
+        for i in 0..gradients.len() {
+            for j in 0..gradients[i].len() {
+                for k in 0..gradients[i][j].len() {
+                    for l in 0..gradient_sets.len() {
+                        gradients[i][j][k] += gradient_sets[l][i][j][k]
+                    }
+                    gradients[i][j][k] = gradients[i][j][k] / gradient_sets.len() as f64;
+                }
+            }
+         }
+
+        self.gradient_descent(gradients);
+
+    }
 
 }
 
