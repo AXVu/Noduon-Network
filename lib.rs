@@ -10,14 +10,22 @@ Output Noduons, which are exactly the same as Inner noduons except they are name
 Detailed and Methods:
 
 Noduons methods are implemented in the Noduon enum
-set_weights(&mut self, new_weights) -> Checks if new_weights is the same size as the old weights and replaces them. Input/Bias->N/a
-set_connections(&mut self, new_connections) -> checks if new_connections is the same size as old connections and replaces them. Input/Bias->N/A
+set_weights(&mut self, new_weights, mutate, mut_rate, mut_degree) -> Checks if new_weights is the same size as the old weights and replaces them.
+Input/Bias->N/a. If mutate is true, has a chance to mutate each weight by a number in +-mut_degree
+set_connections(&mut self, new_connections, mutate, mut_rate) -> checks if new_connections is the same size as old connections and replaces them. Input/Bias->N/A.
+If mutate is true, has a chance to mutate each connection to either true or false with equal chance regardless of original status.
 set_value(&mut self, new_value) -> Sets a new value for the input node. Does nothing for other types.
+change_weights(&mut self, weight_changes) -> Changes the weights of this noduon by the values in a given vector
 get_weights(&self) -> Returns the current weights of the given Noduon. Input/Bias -> empty vector
 get_connections(&self) -> Returns the current connections of the given Noduon. Input/Bias -> empty vector
 get_type(&self) -> Returns the noduon type as a string ("input", "inner1d",etc)
 result(&self, past_layer) -> Returns the sum of each value of the input vector times the connected weights, passed through an activation
 function. Input -> returns value. Bias -> returns 1
+randomize(&mut self) -> re-randomizes the weights of this noduon
+
+Helper:
+activation_derivative(num, function) -> outputs the derivative of the specified activation function
+
 
 **********
 
@@ -33,7 +41,10 @@ get_size(&self) -> Returns the number of Noduons in the layer
 get_types(&self) -> Returns the types of the noduons in this layer as a vector
 get_weights(&self) -> Returns the weights of the noduons in this layer as a matrix of weight values
 get_connections(&self) -> Returns the weights of the noduons in this layer as a matrix of boolean values
-set_values(&mut self) -> Sets the values of inputs, starting at the top
+set_values(&mut self, values) -> Sets the values of inputs, starting at the top
+set_connections(&mut self, new_connections, mutate, mut_rate) -> Calls set_connections for each noduon in the layer, using the input matrix
+set_weights(&mut self, new_weights, mutate, mut_rate) -> Calls set_weights for each noduon in the layer, using the input matrix
+change_weights(&mut self, weight_changes) -> Calls the change_weights function for each noduon in the layer
 add_noduon(&mut self, noduon) -> Adds an already-built Noduon of any type to the layer
 add_dense_noduon(&mut self, previous_layer_noduons, function) -> Builds a noduon fully connected to the previous layer, with the specified activation function
 add_dense_output_noduon(&mut self, previous_layer_noduons, fucntion) -> Builds a noduon fully connected to the previous layer, with the specified activation function and name
@@ -61,7 +72,16 @@ update_network(&mut self) -> Updates the num_inputs and num_outputs parameters t
 get_weights(&self) -> Returns the weights of noduons as a 3d matrix. Rows are layers, columns are noduons, elements are weights.
 get_types(&self) -> Returns the types of noduons as a matrix. Rows are layers, columns are noduon types as strings.
 get_connections(&self) -> Returns the truth value of noduon connections as a 3d matrix. rows are layers, columns are noduons, elements are weights.
+get_functions(&self) -> Returns the functions of each noduon in 2d matrix form.
+set_weights(&mut self, new_weights, mutate, mut_rate, mut_degree) -> Changes the weights to the specifed ones. If mutate mutate by mut_degee with freq mut_rate
+change_weights(&mut self, weight_changes) -> Changes the weights of the matrix with the corresponding 3d matrix
+set_connections(&mut self, mutate, mut_rate) -> Sets the connections of the noduons with the corresponding 3d matrix. Has a chance equal to half the mut_rate to change each connection.
 process(&mut self, inputs) -> With the given inputs, do a full process through each layer and return the output of the network.
+forward_pass(&mut self, inputs) -> Returns the full matrix of the output of each layer in sequence
+loss(&mut self, predicted, actual, function) -> Returns the loss between the predicted and actual value
+backward_pass(&mut self, forward_pass, actual, loss_function) -> Returns the gradient of each connection based on the forward_pass.
+model_to_txt(&self, model_name) -> Produces three files. One with the weights, connections, and types.
+randomize(&mut self) -> Randomize all of the weights in the network.
  */
 
 use std::{vec, fs, io};
@@ -102,7 +122,6 @@ pub struct OutputNoduon1D {
     function: AF
 }
 
-
 #[derive(Clone)]
 pub enum Noduon {
 
@@ -115,7 +134,7 @@ pub enum Noduon {
 
 impl Noduon {
     // Set weights for non-inputs, will do nothing if applied to input
-    fn set_weights(&mut self, new_weights: &Vec<f64>, mutate: bool, mut_rate: f64, mut_degree: f64) {
+    pub fn set_weights(&mut self, new_weights: &Vec<f64>, mutate: bool, mut_rate: f64, mut_degree: f64) {
         if mutate {
         match self {
             Noduon::Input(_) | Noduon::Bias => {},
@@ -183,7 +202,7 @@ impl Noduon {
     }
 
     // Sets connections for non-inputs, will do nothing if applied to input
-    fn set_connections(&mut self, new_connections: &Vec<bool>, mutate: bool, mut_rate: f64) {
+    pub fn set_connections(&mut self, new_connections: &Vec<bool>, mutate: bool, mut_rate: f64) {
         if mutate {
             match self {
                 Noduon::Input(_) | Noduon::Bias => {},
@@ -228,7 +247,7 @@ impl Noduon {
     }
 
     // Set the input value. Doesn't do anything for other types
-    fn set_value(&mut self, new_value: f64) {
+    pub fn set_value(&mut self, new_value: f64) {
         match self {
             Noduon::Input(f) => f.value = new_value,
             _ => ()
@@ -236,7 +255,7 @@ impl Noduon {
     }
 
     // Return the noduon type as a string
-    fn get_type(&self) -> String{
+    pub fn get_type(&self) -> String{
         match self {
             Noduon::Input(_) => String::from("input"),
             Noduon::Inner1D(_) => String::from("inner1d"),
@@ -246,7 +265,7 @@ impl Noduon {
     }
 
     // Gets weights for non-inputs, will return an empty vector if applied to input
-    fn get_weights(&self) -> Vec<f64> {
+    pub fn get_weights(&self) -> Vec<f64> {
         match self {
             Noduon::Input(_) | Noduon::Bias => vec![],
             Noduon::Inner1D(f) => f.weights.clone(),
@@ -255,7 +274,7 @@ impl Noduon {
     }
 
     // Gets connections for non-inputs, will return an empty vector if allplied to input
-    fn get_connections(&self) -> Vec<bool> {
+    pub fn get_connections(&self) -> Vec<bool> {
         match self {
             Noduon::Input(_) | Noduon::Bias => vec![],
             Noduon::Inner1D(f) => f.connections.clone(),
@@ -264,7 +283,7 @@ impl Noduon {
     }
 
     // Returns the activation function of this Noduon
-    fn get_function(&self) -> AF {
+    pub fn get_function(&self) -> AF {
         match self {
             Noduon::Input(_) => AF::NA,
             Noduon::Inner1D(f) => f.function.clone(),
@@ -274,7 +293,7 @@ impl Noduon {
     }
     
     // Randomizes the weights of this Noduon
-    fn randomize(&mut self) {
+    pub fn randomize(&mut self) {
         match self {
             Noduon::Bias | Noduon::Input(_) => (),
             Noduon::Inner1D(f) => {
@@ -293,7 +312,7 @@ impl Noduon {
     }
 
     // Passing in a previous layer's output vector, returns the output of a noduon. Returns the value of an input noduon
-    fn result(&self, past_layer: &Vec<f64>) -> f64 {
+    pub fn result(&self, past_layer: &Vec<f64>) -> f64 {
         match self {
             Noduon::Input(f) => f.value,
             Noduon::Bias => 1.0,
@@ -383,7 +402,7 @@ pub enum Layer {
 
 impl Layer {
     // The standard process of a layer, taking the previous layer's output and outputting the new layer
-    fn process(&self, past_layer: &Vec<f64>) -> Vec<f64> {
+    pub fn process(&self, past_layer: &Vec<f64>) -> Vec<f64> {
         match self {
             Layer::Standard(f) => {
 
@@ -400,35 +419,35 @@ impl Layer {
     }
 
     // Returns Noduon types as a vector
-    fn get_types(&self) -> Vec<String> {
+    pub fn get_types(&self) -> Vec<String> {
         match self {
             Layer::Standard(f) => f.noduons.iter().map(|x| x.get_type()).collect()
         }
     }
 
     // Returns the weights as a matrix. Rows are noduons, columns are the previous layer's noduons
-    fn get_weights(&self) -> Vec<Vec<f64>> {
+    pub fn get_weights(&self) -> Vec<Vec<f64>> {
         match self {
             Layer::Standard(f) => f.noduons.iter().map(|x| x.get_weights()).collect()
         }
     }
 
     // Returns the connections of each Noduon as a matrix. Empty lists are either Input or Bias noduons.
-    fn get_connections(&self) -> Vec<Vec<bool>> {
+    pub fn get_connections(&self) -> Vec<Vec<bool>> {
         match self {
             Layer::Standard(f) => f.noduons.iter().map(|x| x.get_connections()).collect()
         }
     }
 
     // Returns the activation functions of each Nouon in layer as a vector
-    fn get_functions(&self) -> Vec<AF> {
+    pub fn get_functions(&self) -> Vec<AF> {
         match self {
             Layer::Standard(f) => f.noduons.iter().map(|x| x.get_function()).collect()
         }
     }
 
     // Sets the value of each input noduon
-    fn set_values(&mut self, values: &Vec<f64>) {
+    pub fn set_values(&mut self, values: &Vec<f64>) {
         match self {
             Layer::Standard(f) => {
                 for i in 0..values.len() {
@@ -439,7 +458,7 @@ impl Layer {
     }
 
     // Sets the weights of each noduon in a given layer
-    fn set_weights(&mut self, new_weights: &Vec<Vec<f64>>, mutate: bool, mut_rate: f64, mut_degree: f64) {
+    pub fn set_weights(&mut self, new_weights: &Vec<Vec<f64>>, mutate: bool, mut_rate: f64, mut_degree: f64) {
         match self {
             Layer::Standard(f) => {
                 for i in 0..f.noduons.len() {
@@ -450,7 +469,7 @@ impl Layer {
     }
 
     // Changes the weights of each noduon in this layer
-    fn change_weights(&mut self, weight_changes: &Vec<Vec<f64>>) {
+    pub fn change_weights(&mut self, weight_changes: &Vec<Vec<f64>>) {
         match self {
             Layer::Standard(f) => {
                 for i in 0..f.noduons.len() {
@@ -461,7 +480,7 @@ impl Layer {
     }
 
     // Sets the connections of each noduon in a given layer
-    fn set_connections(&mut self, new_connections: &Vec<Vec<bool>>, mutate: bool, mut_rate: f64) {
+    pub fn set_connections(&mut self, new_connections: &Vec<Vec<bool>>, mutate: bool, mut_rate: f64) {
         match self {
             Layer::Standard(f) => {
                 for i in 0..f.noduons.len() {
@@ -472,7 +491,7 @@ impl Layer {
     }
 
     // Adds the given noduon to the layer
-    fn add_noduon(&mut self, noduon: Noduon) {
+    pub fn add_noduon(&mut self, noduon: Noduon) {
         match self {
             Layer::Standard(f) => {
                 f.noduons.push(noduon)
@@ -481,7 +500,7 @@ impl Layer {
     }
 
     // Adds a fully connected noduon to the layer
-    fn add_dense_noduon(&mut self, previous_layer_noduons: usize, function: AF) {
+    pub fn add_dense_noduon(&mut self, previous_layer_noduons: usize, function: AF) {
         match self {
             Layer::Standard(f) => {
 
@@ -495,7 +514,7 @@ impl Layer {
     }
 
     // Adds a fully connected output noduon to the layer
-    fn add_dense_output_noduon(&mut self, previous_layer_noduons: usize, function: AF) {
+    pub fn add_dense_output_noduon(&mut self, previous_layer_noduons: usize, function: AF) {
         match self {
             Layer::Standard(f) => {
 
@@ -509,7 +528,7 @@ impl Layer {
     }
 
     // Randomize the weights of each noduon in the layer
-    fn randomize(&mut self) {
+    pub fn randomize(&mut self) {
         match self {
             Layer::Standard(f) => {
                 for noduon in 0..f.noduons.len() {
@@ -521,7 +540,7 @@ impl Layer {
 
 
     // Return the number of noduons in the layer
-    fn get_size(&self) -> usize{
+    pub fn get_size(&self) -> usize{
         match self {
             Layer::Standard(f) => f.noduons.len()
         }
