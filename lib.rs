@@ -82,7 +82,7 @@ loss(&mut self, predicted, actual, function) -> Returns the loss between the pre
 backward_pass(&mut self, forward_pass, actual, loss_function) -> Returns the gradient of each connection based on the forward_pass.
 model_to_txt(&self, model_name) -> Produces three files. One with the weights, connections, and types.
 randomize(&mut self) -> Randomize all of the weights in the network.
- */
+*/
 
 use std::{vec, fs, io};
 use std::error::Error;
@@ -91,6 +91,8 @@ use std::io::BufRead;
 use std::io::prelude::*;
 use std::fs::File;
 use std::path::Path;
+use std::arch::x86_64::*;
+use std::thread;
 
 // Activation function enum
 #[derive(Clone)]
@@ -102,26 +104,29 @@ pub enum AF {
     NA
 }
 
+// Noduons that perform no calculations. Instead, they simply store the input value
 #[derive(Clone)]
 pub struct InputNoduon {
-    value: f64
+    value: f32
 }
 
 #[derive(Clone)]
 // A 1D Inner Noduon only connects to noduons on one dimension
 pub struct InnerNoduon1D {
     connections: Vec<bool>,
-    weights: Vec<f64>,
+    weights: Vec<f32>,
     function: AF
 }
 
+// Output Noduons perform exactly the same as Inner Noduons
 #[derive(Clone)]
 pub struct OutputNoduon1D {
     connections: Vec<bool>,
-    weights: Vec<f64>,
+    weights: Vec<f32>,
     function: AF
 }
 
+// Define the Noduon enum with Input, Inner1D, Output1D, and Bias noduons
 #[derive(Clone)]
 pub enum Noduon {
 
@@ -134,41 +139,61 @@ pub enum Noduon {
 
 impl Noduon {
     // Set weights for non-inputs, will do nothing if applied to input
-    pub fn set_weights(&mut self, new_weights: &Vec<f64>, mutate: bool, mut_rate: f64, mut_degree: f64) {
+    pub fn set_weights(&mut self, new_weights: &Vec<f32>, mutate: bool, mut_rate: f32, mut_degree: f32) {
+        // Check whether mutation should occur
         if mutate {
-        match self {
-            Noduon::Input(_) | Noduon::Bias => {},
-            Noduon::Inner1D(f) => {
-                let mut rng = rand::thread_rng();
-                if new_weights.len() == f.weights.len() {
-                    for i in 0..new_weights.len() {
-                        f.weights[i] = new_weights[i];
-                        if rng.gen_range(0.0..1.0) < mut_rate{
-                            f.weights[i] = f.weights[i] + rng.gen_range(-mut_degree..=mut_degree);
+            // Use a match statement in order to determine what should be done with the weights
+            match self {
+                // Input and Bias noduons have no weights, so attempting to set weights on them will fail
+                Noduon::Input(_) | Noduon::Bias => {},
+                // Inner noduons will have their weights set as long as the vector is the proper length
+                Noduon::Inner1D(f) => {
+                    let mut rng = rand::thread_rng();
+                    // Check for proper vector length
+                    if new_weights.len() == f.weights.len() {
+                        // Iterate through this Noduon's weights
+                        for i in 0..new_weights.len() {
+                            // Set its weights to the new value
+                            f.weights[i] = new_weights[i];
+                            // Pick a random number compared against mut rate to decide whether to mutate
+                            if rng.gen_range(0.0..1.0) < mut_rate{
+                                // Change the weight by a random float between - and + mut_degree
+                                f.weights[i] = f.weights[i] + rng.gen_range(-mut_degree..=mut_degree);
+                            }
                         }
                     }
-                }
-            },
-            Noduon::Output1D(f) => {
-                let mut rng = rand::thread_rng();
-                if new_weights.len() == f.weights.len() {
-                    for i in 0..new_weights.len() {
-                        f.weights[i] = new_weights[i];
-                        if rng.gen_range(0.0..1.0) < mut_rate{
-                            f.weights[i] = f.weights[i] + rng.gen_range(-mut_degree..=mut_degree);
+                },
+                // Output Noduons will have their weights set as long as the vector is the proper length
+                Noduon::Output1D(f) => {
+                    let mut rng = rand::thread_rng();
+                    // Check for proper vector length
+                    if new_weights.len() == f.weights.len() {
+                        // Iterate through this Noduon's weights
+                        for i in 0..new_weights.len() {
+                            // Set its weights to the new value
+                            f.weights[i] = new_weights[i];
+                            // Pick a random number compared against mut rate to decide whether to mutate
+                            if rng.gen_range(0.0..1.0) < mut_rate{
+                                // Change the weight by a random float between - and + mut_degree
+                                f.weights[i] = f.weights[i] + rng.gen_range(-mut_degree..=mut_degree);
+                            }
                         }
                     }
                 }
             }
-        }
         } else {
+            // Use a match statement in order to determine what should be done with the weights
             match self {
+                // Input and Bias noduons have no weights, so attempting to set weights on them will fail
                 Noduon::Input(_) | Noduon::Bias => {},
+                // Inner noduons will have their weights set as long as the vector is the proper length
                 Noduon::Inner1D(f) => {
+                    // Check for proper length
                     if new_weights.len() == f.weights.len() {
                         f.weights = new_weights.to_vec();
                     }
                 },
+                // Output noduons will have their weights set as long as the vector is the proper length
                 Noduon::Output1D(f) => {
                     if new_weights.len() == f.weights.len() {
                         f.weights = new_weights.to_vec();
@@ -181,18 +206,24 @@ impl Noduon {
     }
 
     // Accepts a vector of weight changes and applies them to this Noduon's weights
-    pub fn change_weights(&mut self, weight_changes: &Vec<f64>) {
+    pub fn change_weights(&mut self, weight_changes: &Vec<f32>) {
+        // Use match statement to determine what should be done
         match self {
+            // Ignore Bias and input noduons
             Noduon::Input(_) | Noduon::Bias => {},
+            // Change the weights for inner noduon by the specified amount
             Noduon::Inner1D(f) => {
                 if weight_changes.len() == f.weights.len() {
+                    // Iterate through weights
                     for i in 0..weight_changes.len() {
                         f.weights[i] += weight_changes[i]
                     }
                 }
             },
+            // Change the weights for output noduon by the specified amount
             Noduon::Output1D(f) => {
                 if weight_changes.len() == f.weights.len() {
+                    // Iterate through weights
                     for i in 0..weight_changes.len() {
                         f.weights[i] += weight_changes[i]
                     }
@@ -202,26 +233,35 @@ impl Noduon {
     }
 
     // Sets connections for non-inputs, will do nothing if applied to input
-    pub fn set_connections(&mut self, new_connections: &Vec<bool>, mutate: bool, mut_rate: f64) {
+    pub fn set_connections(&mut self, new_connections: &Vec<bool>, mutate: bool, mut_rate: f32) {
+        // Check for mutation
         if mutate {
+            // Match statement to determine what happens
             match self {
+                // Ignore Input and Bias noduons
                 Noduon::Input(_) | Noduon::Bias => {},
+                // Connections will set to the new ones
                 Noduon::Inner1D(f) => {
                     let mut rng = rand::thread_rng();
                     if new_connections.len() == f.connections.len() {
+                        // Iterate through connections
                         for i in 0..new_connections.len() {
                             f.connections[i] = new_connections[i];
+                            // If mutate is determined, will set to random connection (not guaranteed to change)
                             if rng.gen_range(0.0..1.0) < mut_rate{
                                 f.connections[i] = rng.gen_bool(0.5);
                             }
                         }
                     }
                 },
+                // Connections will set to the new ones
                 Noduon::Output1D(f) => {
                     let mut rng = rand::thread_rng();
                     if new_connections.len() == f.connections.len() {
+                        // Iterate through connections
                         for i in 0..new_connections.len() {
                             f.connections[i] = new_connections[i];
+                            // If mutate is determined, will set to random connection (not guaranteed to change)
                             if rng.gen_range(0.0..1.0) < mut_rate{
                                 f.connections[i] = rng.gen_bool(0.5);
                             }
@@ -230,13 +270,17 @@ impl Noduon {
                 }
             }
         } else {
+            // Match statement to determine what happens if no mutation
             match self {
+                // Ignore Input and Bias noduons
                 Noduon::Input(_) | Noduon::Bias => {},
+                // Connections are set to the new ones if vector length is correct
                 Noduon::Inner1D(f) => {
                     if new_connections.len() == f.connections.len() {
                         f.connections = new_connections.to_vec();
                     }
                 },
+                // Connections are set to the new ones if vector length is correct
                 Noduon::Output1D(f) => {
                     if new_connections.len() == f.connections.len() {
                         f.connections = new_connections.to_vec();
@@ -247,7 +291,7 @@ impl Noduon {
     }
 
     // Set the input value. Doesn't do anything for other types
-    pub fn set_value(&mut self, new_value: f64) {
+    pub fn set_value(&mut self, new_value: f32) {
         match self {
             Noduon::Input(f) => f.value = new_value,
             _ => ()
@@ -265,7 +309,7 @@ impl Noduon {
     }
 
     // Gets weights for non-inputs, will return an empty vector if applied to input
-    pub fn get_weights(&self) -> Vec<f64> {
+    pub fn get_weights(&self) -> Vec<f32> {
         match self {
             Noduon::Input(_) | Noduon::Bias => vec![],
             Noduon::Inner1D(f) => f.weights.clone(),
@@ -295,13 +339,16 @@ impl Noduon {
     // Randomizes the weights of this Noduon
     pub fn randomize(&mut self) {
         match self {
+            // Does nothing on Bias or Input noduons
             Noduon::Bias | Noduon::Input(_) => (),
+            // Randomizes weights between -1 and +1
             Noduon::Inner1D(f) => {
                 let mut rng = rand::thread_rng();
                 for i in 0..f.weights.len() {
                     f.weights[i] = rng.gen_range(-1.0..=1.0);
                 }
             },
+            // Randomizes weights between -1 and +1
             Noduon::Output1D(f) => {
                 let mut rng = rand::thread_rng();
                 for i in 0..f.weights.len() {
@@ -312,18 +359,23 @@ impl Noduon {
     }
 
     // Passing in a previous layer's output vector, returns the output of a noduon. Returns the value of an input noduon
-    pub fn result(&self, past_layer: &Vec<f64>) -> f64 {
+    pub fn result(&self, past_layer: &Vec<f32>) -> f32 {
         match self {
+            // Input noduons return their value
             Noduon::Input(f) => f.value,
+            // Bias noduons return 1
             Noduon::Bias => 1.0,
+            // Inner noduons return the respective weighted sum
             Noduon::Inner1D(f) => {
-                let mut total: f64 = 0.0;
+                let mut total: f32 = 0.0;
+                // Iterate through
                 for connect in 0..f.connections.len() {
                     if f.connections[connect] {
                         total += past_layer[connect] * f.weights[connect];
                     }
                 }
 
+                // Match activation function and apply to total
                 total = match f.function {
                     AF::Tanh => total.tanh(),
                     AF::ReLU => {
@@ -337,14 +389,17 @@ impl Noduon {
                  };
                  total
             },
+            // Output noduons return their weighted sum
             Noduon::Output1D(f) => {
-                let mut total: f64 = 0.0;
+                let mut total: f32 = 0.0;
+                // Iterate through
                 for connect in 0..f.connections.len() {
                     if f.connections[connect] {
                         total += past_layer[connect] * f.weights[connect];
                     }
                 }
 
+                // Match activation function and apply to total
                 total = match f.function {
                     AF::Tanh => total.tanh(),
                     AF::ReLU => {
@@ -356,7 +411,6 @@ impl Noduon {
                     AF::Sigmoid => 1.0 / (1.0 + (-total).exp()),
                     _ => total
                  };
-
                 total
             }
         }
@@ -367,7 +421,7 @@ impl Noduon {
 
 
 // Helper function for gradient
-pub fn activation_derivative(num: f64, function: &AF) -> f64 {
+pub fn activation_derivative(num: f32, function: &AF) -> f32 {
     match function {
         AF::ReLU => {
             if num > 0.0 {
@@ -390,24 +444,55 @@ pub fn activation_derivative(num: f64, function: &AF) -> f64 {
 ////////////////////////////////////
 // Start of Layer section
 
+// Layers are collections of noduons. 1D layers are 1 dimensional arrays of noduons
 #[derive(Clone)]
 pub struct Layer1D {
     noduons: Vec<Noduon>
 }
 
+// Layers are different ways to collect noduons
 #[derive(Clone)]
 pub enum Layer {
     Standard(Layer1D)
 }
 
 impl Layer {
+
+    // An advanced processing to optimize time taken, using vector-matrix math and multithreading
+    pub fn simd_process(&self, past_layer: &Vec<f32>) -> Vec<f32> {
+        let weights = self.get_weights();
+        let funcs = self.get_functions();
+        let mut result: Vec<f32> = vec![];
+        // Iterate through rows, doing weighted sums
+        for row in 0..weights.len() {
+            if weights[row].len() == 0 {
+                result.push(1.0);
+            } else {
+                let mut total = simd_weighted_sum(&weights[row], past_layer);
+                total = match funcs[row] {
+                    AF::Tanh => total.tanh(),
+                    AF::ReLU => {
+                        if total > 0.0 {
+                            total
+                        } else {
+                            0.0
+                        }},
+                    AF::Sigmoid => 1.0 / (1.0 + (-total).exp()),
+                    _ => total};
+                result.push(total)
+            }
+        }
+        return result;
+    }
+
     // The standard process of a layer, taking the previous layer's output and outputting the new layer
-    pub fn process(&self, past_layer: &Vec<f64>) -> Vec<f64> {
+    pub fn process(&self, past_layer: &Vec<f32>) -> Vec<f32> {
         match self {
             Layer::Standard(f) => {
 
-                let mut result: Vec<f64> = vec![];
+                let mut result: Vec<f32> = vec![];
 
+                // Iterate through the noduons in the layer, passing the past_layer
                 for noduon in &f.noduons {
                     result.push(noduon.result(&past_layer))
                 }
@@ -426,7 +511,7 @@ impl Layer {
     }
 
     // Returns the weights as a matrix. Rows are noduons, columns are the previous layer's noduons
-    pub fn get_weights(&self) -> Vec<Vec<f64>> {
+    pub fn get_weights(&self) -> Vec<Vec<f32>> {
         match self {
             Layer::Standard(f) => f.noduons.iter().map(|x| x.get_weights()).collect()
         }
@@ -447,7 +532,7 @@ impl Layer {
     }
 
     // Sets the value of each input noduon
-    pub fn set_values(&mut self, values: &Vec<f64>) {
+    pub fn set_values(&mut self, values: &Vec<f32>) {
         match self {
             Layer::Standard(f) => {
                 for i in 0..values.len() {
@@ -458,7 +543,7 @@ impl Layer {
     }
 
     // Sets the weights of each noduon in a given layer
-    pub fn set_weights(&mut self, new_weights: &Vec<Vec<f64>>, mutate: bool, mut_rate: f64, mut_degree: f64) {
+    pub fn set_weights(&mut self, new_weights: &Vec<Vec<f32>>, mutate: bool, mut_rate: f32, mut_degree: f32) {
         match self {
             Layer::Standard(f) => {
                 for i in 0..f.noduons.len() {
@@ -469,7 +554,7 @@ impl Layer {
     }
 
     // Changes the weights of each noduon in this layer
-    pub fn change_weights(&mut self, weight_changes: &Vec<Vec<f64>>) {
+    pub fn change_weights(&mut self, weight_changes: &Vec<Vec<f32>>) {
         match self {
             Layer::Standard(f) => {
                 for i in 0..f.noduons.len() {
@@ -480,7 +565,7 @@ impl Layer {
     }
 
     // Sets the connections of each noduon in a given layer
-    pub fn set_connections(&mut self, new_connections: &Vec<Vec<bool>>, mutate: bool, mut_rate: f64) {
+    pub fn set_connections(&mut self, new_connections: &Vec<Vec<bool>>, mutate: bool, mut_rate: f32) {
         match self {
             Layer::Standard(f) => {
                 for i in 0..f.noduons.len() {
@@ -505,7 +590,7 @@ impl Layer {
             Layer::Standard(f) => {
 
                 let mut rng = rand::thread_rng();
-                let weight: Vec<f64> = (0..previous_layer_noduons).map(|_| rng.gen_range(-1.0..=1.0)).collect();
+                let weight: Vec<f32> = (0..previous_layer_noduons).map(|_| rng.gen_range(-1.0..=1.0)).collect();
                 let connects: Vec<bool> = (0..previous_layer_noduons).map(|_| true).collect();
                 let new_noduon: Noduon = Noduon::Inner1D(InnerNoduon1D { connections: connects, weights: weight, function: function });
                 f.noduons.push(new_noduon);
@@ -519,7 +604,7 @@ impl Layer {
             Layer::Standard(f) => {
 
                 let mut rng = rand::thread_rng();
-                let weight: Vec<f64> = (0..previous_layer_noduons).map(|_| rng.gen_range(-1.0..=1.0)).collect();
+                let weight: Vec<f32> = (0..previous_layer_noduons).map(|_| rng.gen_range(-1.0..=1.0)).collect();
                 let connects: Vec<bool> = (0..previous_layer_noduons).map(|_| true).collect();
                 let new_noduon: Noduon = Noduon::Output1D(OutputNoduon1D{ connections: connects, weights: weight, function: function });
                 f.noduons.push(new_noduon);
@@ -546,6 +631,37 @@ impl Layer {
         }
     }
 
+}
+
+// A helper function to do each vector's multiplication
+pub fn simd_weighted_sum(weights: &Vec<f32>, vector: &Vec<f32>) -> f32{
+    let vals = weights.len();
+    let chunks = vals / 8;
+    let mut total_sum: f32 = 0.0;
+    let w_ptr = weights.as_ptr();
+    let v_ptr = vector.as_ptr();
+    // Unsafe block for SIMD operations
+    unsafe {
+        for chunk in 0..chunks {
+            // This line of code performs the multiplication
+            let sum = _mm256_mul_ps(_mm256_loadu_ps(w_ptr.add(chunk * 8)), _mm256_loadu_ps(v_ptr.add(chunk * 8)));
+            // This line starts the sum
+            let sum = _mm256_hadd_ps(sum, sum);
+            // Take first 4 elements
+            let low = _mm256_extractf128_ps(sum, 0);
+
+            let mut res = [0.0_f32; 4];
+            _mm_storeu_ps(res.as_mut_ptr(), low);
+
+            // Add the result into the total sum
+            total_sum += res.iter().sum::<f32>();
+        }
+        // Handle the extra values
+        for i in (chunks * 8)..vals {
+            total_sum += weights[i] * vector[i]
+        }
+        total_sum
+    }
 }
 
 // End Layer
@@ -644,7 +760,7 @@ impl Network {
     }
 
     // Returns weights as a 3d matrix. Rows are layers, columns are noduons, elements are weights. Empty columns are either input or bias
-    pub fn get_weights(&self) -> Vec<Vec<Vec<f64>>> {
+    pub fn get_weights(&self) -> Vec<Vec<Vec<f32>>> {
         self.layers.iter().map(|x| x.get_weights()).collect()
     }
 
@@ -663,34 +779,34 @@ impl Network {
     }
 
     // Sets weights of each noduon in the network. You should include empty values for bias or input values.
-    pub fn set_weights(&mut self, new_weights: Vec<Vec<Vec<f64>>>, mutate: bool, mut_rate: f64, mut_degree: f64) {
+    pub fn set_weights(&mut self, new_weights: Vec<Vec<Vec<f32>>>, mutate: bool, mut_rate: f32, mut_degree: f32) {
         for i in 0..self.layers.len() {
             self.layers[i].set_weights(&new_weights[i], mutate, mut_rate, mut_degree);
         }
     }
 
     // Changes weights of each noduon in the network. Include empty values for bias or input noduons.
-    pub fn change_weights(&mut self, weight_changes: Vec<Vec<Vec<f64>>>) {
+    pub fn change_weights(&mut self, weight_changes: Vec<Vec<Vec<f32>>>) {
         for i in 0..self.layers.len() {
             self.layers[i].change_weights(&weight_changes[i])
         }
     }
 
     // Sets connections of each noduon in the network. You should invlude empty values for bias or input values
-    pub fn set_connections(&mut self, new_connections: Vec<Vec<Vec<bool>>>, mutate: bool, mut_rate: f64) {
+    pub fn set_connections(&mut self, new_connections: Vec<Vec<Vec<bool>>>, mutate: bool, mut_rate: f32) {
         for i in 0..self.layers.len() {
             self.layers[i].set_connections(&new_connections[i], mutate, mut_rate)
         }
     }
 
     // Takes inputs, passing each layer's result to each other. 
-    pub fn process(&mut self, inputs: &Vec<f64>) -> Vec<f64> {
+    pub fn process(&mut self, inputs: &Vec<f32>) -> Vec<f32> {
 
         if inputs.len() == self.num_inputs {
             self.layers[0].set_values(inputs);
         }
 
-        let mut results: Vec<Vec<f64>> = vec![vec![]];
+        let mut results: Vec<Vec<f32>> = vec![vec![]];
         for i in 0..self.layers.len() {
             results.push(self.layers[i].process(&results[i]));
         }
@@ -698,10 +814,25 @@ impl Network {
         return results[self.layers.len()].clone();
     }
 
-    // Does a full process but also returns all intermediate layer results
-    pub fn forward_pass(&mut self, inputs: &Vec<f64>) -> Vec<Vec<f64>> {
+    // Alternate process that takes use of SIMD operations
+    pub fn simd_process(&mut self, inputs: &Vec<f32>) -> Vec<f32> {
+        // Check if inputs are proper
+        if inputs.len() == self.num_inputs {
+            self.layers[0].set_values(inputs);
+        }
 
-        let mut results: Vec<Vec<f64>> = vec![];
+        let mut results: Vec<Vec<f32>> = vec![self.layers[0].process(&vec![])];
+
+        for i in 1..self.layers.len() {
+            results.push(self.layers[i].simd_process(&results[i - 1]))
+        }
+        results[self.layers.len() - 1].clone()
+    }
+
+    // Does a full process but also returns all intermediate layer results
+    pub fn forward_pass(&mut self, inputs: &Vec<f32>) -> Vec<Vec<f32>> {
+
+        let mut results: Vec<Vec<f32>> = vec![];
 
         if inputs.len() == self.num_inputs {
             self.layers[0].set_values(inputs);
@@ -720,7 +851,7 @@ impl Network {
     }
 
     // Calculates the loss function
-    pub fn loss(&mut self, predicted: Vec<f64>, actual: Vec<f64>, function: String) -> f64 {
+    pub fn loss(&mut self, predicted: Vec<f32>, actual: Vec<f32>, function: String) -> f32 {
 
         match function.as_str() {
             "mse" => {
@@ -728,14 +859,14 @@ impl Network {
                 for i in 0..predicted.len() {
                     total += (predicted[i] - actual[i]).powi(2);
                 }
-                total / predicted.len() as f64
+                total / predicted.len() as f32
             },
             "mae" => {
-                let mut total: f64 = 0.0;
+                let mut total: f32 = 0.0;
                 for i in 0..predicted.len() {
                     total += (predicted[i] - actual[i]).abs();
                 }
-                total / predicted.len() as f64
+                total / predicted.len() as f32
             },
             _ => 1.0
 
@@ -744,12 +875,12 @@ impl Network {
     }
 
     // Computes the gradients of all weights based on the output and loss function
-    pub fn backwards_pass(&mut self, forward_pass: Vec<Vec<f64>>, actual: Vec<f64>, loss_function: String) -> Vec<Vec<Vec<f64>>> {
+    pub fn backwards_pass(&mut self, forward_pass: Vec<Vec<f32>>, actual: Vec<f32>, loss_function: String) -> Vec<Vec<Vec<f32>>> {
 
         // Declare the necessary variables
-        let mut derivatives: Vec<Vec<f64>> = vec![];
-        let mut gradients: Vec<Vec<Vec<f64>>> = vec![];
-        let weights: Vec<Vec<Vec<f64>>> = self.get_weights();
+        let mut derivatives: Vec<Vec<f32>> = vec![];
+        let mut gradients: Vec<Vec<Vec<f32>>> = vec![];
+        let weights: Vec<Vec<Vec<f32>>> = self.get_weights();
         let connections: Vec<Vec<Vec<bool>>> = self.get_connections();
         let functions: Vec<Vec<AF>> = self.get_functions();
 
@@ -757,16 +888,16 @@ impl Network {
         let outputs = forward_pass.last().unwrap().clone();
 
         // Compute the output loss derivative
-        let out_loss_derivative: Vec<f64> = match loss_function.as_str() {
+        let out_loss_derivative: Vec<f32> = match loss_function.as_str() {
             "mse" => {
-                let mut derivates: Vec<f64> = vec![];
+                let mut derivates: Vec<f32> = vec![];
                 for i in 0..outputs.len() {
                     derivates.push(outputs[i] - actual[i])
                 }
                 derivates
             },
             _ => {
-                let derivates: Vec<f64> = outputs.iter().map(|_| 0.0).collect();
+                let derivates: Vec<f32> = outputs.iter().map(|_| 0.0).collect();
                 derivates
             }
         };
@@ -775,12 +906,12 @@ impl Network {
 
         // Iterate over each layer
         for i in (0..self.layers.len()).rev() {
-            let mut layer_gradients: Vec<Vec<f64>> = vec![];
-            let mut layer_derivatives: Vec<f64> = vec![];
+            let mut layer_gradients: Vec<Vec<f32>> = vec![];
+            let mut layer_derivatives: Vec<f32> = vec![];
             // Iterate over each noduon
             for j in 0..self.layers[i].get_size() {
-                let mut noduon_gradients: Vec<f64> = vec![];
-                let mut rld: f64 = 0.0;
+                let mut noduon_gradients: Vec<f32> = vec![];
+                let mut rld: f32 = 0.0;
 
                 // Calculate the rld (relative loss derivative) for the noduon based on weights of its forwards connections
                 let cap: usize;
@@ -788,13 +919,13 @@ impl Network {
                     cap = weights[i + 1].len();
                     for k in 0..cap {
                         if connections[i + 1][k].contains(&true) && connections[i + 1][k][j] {
-                            rld += (derivatives[0][k] * weights[i + 1][k][j]) as f64
+                            rld += (derivatives[0][k] * weights[i + 1][k][j]) as f32
                         }
                     }
                     
                     // Compute the value derivative for this noduon
 
-                    let my_derivative: f64 = rld * activation_derivative(forward_pass[i][j], &functions[i][j]);
+                    let my_derivative: f32 = rld * activation_derivative(forward_pass[i][j], &functions[i][j]);
                     layer_derivatives.push(my_derivative);
 
                     // Calculate the gradient from each backwards result and my_derivative
@@ -897,7 +1028,7 @@ impl Network {
         let mut i: usize = 0;
         let mut j: usize = 0;
         let mut layer_num: usize = 0;
-        let mut new_weights: Vec<Vec<Vec<f64>>> = vec![vec![]];
+        let mut new_weights: Vec<Vec<Vec<f32>>> = vec![vec![]];
         let num_shape: Vec<usize> = self.layers.iter().map(|x| x.get_size()).collect();
         for line in reader.lines() {
             if i == 0{
@@ -915,7 +1046,7 @@ impl Network {
                     layer_num += 1;
                 }
                 if set.clone().len() != 0 {
-                let nod_weights: Vec<f64> = set.split(',').map(|x| x.parse::<f64>().unwrap()).collect();
+                let nod_weights: Vec<f32> = set.split(',').map(|x| x.parse::<f32>().unwrap()).collect();
                 new_weights[layer_num].push(nod_weights);
                 } else {
                     new_weights[layer_num].push(vec![]);
@@ -1035,7 +1166,7 @@ pub fn build_typical_model(shape: Vec<usize>, inner_function: AF, output_functio
 #[derive(Clone)]
 pub struct Agent {
     pub network: Network,
-    pub score: f64
+    pub score: f32
 }
 
 
@@ -1049,7 +1180,7 @@ pub struct Agency {
 
 impl Agency {
     // Reorders the agents based on their performance, highest scoring being put closer to the beginning
-    pub fn reorder(&mut self, scores: Vec<f64>) -> f64 {
+    pub fn reorder(&mut self, scores: Vec<f32>) -> f32 {
         for agent in 0..self.agents.len() {
             self.agents[agent].score = scores[agent];
         }
@@ -1078,7 +1209,7 @@ impl Agency {
     }
 
     // Clones with a chance to mutate
-    fn direct_descendant(&mut self, parent: usize, mut_rate: f64, mut_degree: f64) -> Agent {
+    fn direct_descendant(&mut self, parent: usize, mut_rate: f32, mut_degree: f32) -> Agent {
         let mut model = self.root.clone();
         model.set_weights(self.agents[parent].network.get_weights(), true, mut_rate, mut_degree);
         model.set_connections(self.agents[parent].network.get_connections(), true, mut_rate);
@@ -1117,7 +1248,7 @@ impl Agency {
     }
 
     // A full generation change. There are parameters for different elements of the transition
-    pub fn genetic_generation(&mut self, cut_bottom: usize, top_crosses: usize, top_rand_crosses: usize, direct_descendants: usize, elites: usize, mut_rate: f64, mut_degree: f64) {
+    pub fn genetic_generation(&mut self, cut_bottom: usize, top_crosses: usize, top_rand_crosses: usize, direct_descendants: usize, elites: usize, mut_rate: f32, mut_degree: f32) {
         self.cut_bottom_agents(cut_bottom);
         let num_parents = self.agents.len();
         let mut cross: usize = 0;
@@ -1205,9 +1336,9 @@ pub fn build_agency_from_root(root: Network, max_size: usize, randomize_weights:
 /// START TUTORS /////
 
 pub struct Tutor {
-    pub gradients: Vec<Vec<Vec<f64>>>,
-    pub learning_coefficient: f64,
-    pub other_parameters: [f64; 4],
+    pub gradients: Vec<Vec<Vec<f32>>>,
+    pub learning_coefficient: f32,
+    pub other_parameters: [f32; 4],
     pub pupil: Network
 }
 
@@ -1218,7 +1349,7 @@ pub fn build_default_tutor(network: Network) -> Tutor {
 impl Tutor {
 
     // Apply basic gradient descent to the tutor's pupil
-    pub fn gradient_descent(&mut self, mut gradients: Vec<Vec<Vec<f64>>>) {
+    pub fn gradient_descent(&mut self, mut gradients: Vec<Vec<Vec<f32>>>) {
 
         // Update gradients to hold the new gradients
         self.gradients = gradients.clone();
@@ -1238,10 +1369,10 @@ impl Tutor {
     }
 
     // Preform a complete training step on a batch of data
-    pub fn batch_train_gd(&mut self, train_features: Vec<Vec<f64>>, train_labels: Vec<Vec<f64>>, loss_function:String) {
+    pub fn batch_train_gd(&mut self, train_features: Vec<Vec<f32>>, train_labels: Vec<Vec<f32>>, loss_function:String) {
 
-        let mut gradients:Vec<Vec<Vec<f64>>> = self.pupil.get_weights().iter().map(|x| x.iter().map(|x| x.iter().map(|_| 0.0).collect()).collect()).collect();
-        let mut gradient_sets: Vec<Vec<Vec<Vec<f64>>>> = vec![];
+        let mut gradients:Vec<Vec<Vec<f32>>> = self.pupil.get_weights().iter().map(|x| x.iter().map(|x| x.iter().map(|_| 0.0).collect()).collect()).collect();
+        let mut gradient_sets: Vec<Vec<Vec<Vec<f32>>>> = vec![];
 
         for i in 0..train_features.len() {
             let forward = self.pupil.forward_pass(&train_features[i]);
@@ -1255,7 +1386,7 @@ impl Tutor {
                     for l in 0..gradient_sets.len() {
                         gradients[i][j][k] += gradient_sets[l][i][j][k]
                     }
-                    gradients[i][j][k] = gradients[i][j][k] / gradient_sets.len() as f64;
+                    gradients[i][j][k] = gradients[i][j][k] / gradient_sets.len() as f32;
                 }
             }
          }
