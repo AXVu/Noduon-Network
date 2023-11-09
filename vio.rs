@@ -198,6 +198,11 @@ impl Network {
         self.layers.iter().map(|x| x.get_weights()).collect()
     } // End get_weights
 
+    // get_functions returns the 2d matrix of noduon activation functions
+    pub fn get_functions(&self) -> Vec<Vec<AF>> {
+        self.layers.iter().map(|x| x.get_functions()).collect()
+    } // End get_functions
+
     // add_input will push a new random weight to each noduon in the first layer
     pub fn add_input(&mut self) {
         // Start by generating a random Vec
@@ -228,19 +233,99 @@ impl Network {
         // for each layer, process and add the result to the output
         for layer in self.layers.iter() {
             input = layer.process(&input);
-            outs.push(input.clone())
+            outs.push(input.clone());
         }
         outs
     } // End forward_pass
 
     // backward_pass computes the gradients of each weight and returns them as a 3d matrix
-    pub fn backward_pass(&self, forward_pass: Vec<Vec<f32>>) -> Vec<Vec<Vec<f32>>> {
-        let mut gradients: Vec<Vec<Vec<f32>>> = Vec::new();
+    pub fn backward_pass(&self, forward_pass: Vec<Vec<f32>>, actual: Vec<f32>, loss: &str) -> Vec<Vec<Vec<f32>>> {
 
         let weights: Vec<Vec<Vec<f32>>> = self.get_weights();
+        let functions: Vec<Vec<AF>> = self.get_functions();
 
+        let mut gradients: Vec<Vec<Vec<f32>>> = Vec::new();
+        let mut derivatives: Vec<Vec<f32>> = Vec::new();
+
+        let outputs = forward_pass.last().unwrap().clone();
+
+        let out_loss_derivative: Vec<f32> = match loss {
+            "mse" => {
+                let mut derivates: Vec<f32> = vec![];
+                for i in 0..outputs.len() {
+                    derivates.push(outputs[i] - actual[i])
+                }
+                derivates
+            },
+            _ => {
+                let derivates: Vec<f32> = outputs.iter().map(|_| 0.0).collect();
+                derivates
+            }
+        };
+
+        derivatives.push(out_loss_derivative);
+
+        // Iterate through layers backwards, using index
+        for i in (0..self.layers.len()).rev() {
+            let mut layer_gradient: Vec<Vec<f32>> = Vec::new();
+            let mut layer_derivatives: Vec<f32> = Vec::new();
+
+            // Iterate through noduons in the layer
+            for j in 0..self.layers[i].noduons.len() {
+                let mut this_gradients: Vec<f32> = Vec::new();
+                let fwd_connections: usize;
+
+                let mut rld: f32 = 0.0;
+                // If this layer is not the last, then calculate relative loss derivatives as normal
+                if i != self.layers.len() - 1 {
+                    // Calculate the rld as the weight of its forward connection times the derivative of that noduon. Summed
+                    fwd_connections = weights[i + 1].len() - 1;
+                    for k in 0..fwd_connections {
+                        rld += derivatives[0][k] * weights[i + 1][k][j]
+                    }
+
+                    // Compute the value derivative for this noduon as its rld times the derivative of its activation function
+                    let this_derivative: f32 = rld * activation_derivative(forward_pass[i][j], &functions[i][j]);
+                    // Push it to the layer derivatives
+                    layer_derivatives.push(this_derivative);
+
+                    // Calculate the weight gradients as this noduon's value derivative times the value of the backward connection
+                    for k in 0..weights[i][j].len() {
+                        this_gradients.push(this_derivative * forward_pass[i - 1][k])
+                    }
+                } // End default branch
+                else {  // This branch takes place on the last layer only
+                    for k in 0..weights[i][j].len() {
+                        this_gradients.push(derivatives[0][j] * forward_pass[i - 1][k])
+                    }
+                } // End if branches. At this point, the vec this_gradients will be full of the weight gradients of this noduon
+                layer_gradient.push(this_gradients);
+            } // End layer. At this point, layer_gradient will have the layer gradients of each noduon in it.
+            gradients.insert(0, layer_gradient);
+            if i != self.layers.len() - 1 {
+                derivatives.insert(0, layer_derivatives)
+            }
+        }
+        // Return the filled gradients matrix
         gradients
-    }
+    } // End backward_pass
+
+    // train will perform a forward and backward pass, calculate the forward pass, perform the backward pass, and perform gradient desc
+    pub fn train(&mut self, input: Vec<f32>, expected: Vec<f32>, loss: &str, learn_rate: f32) {
+        let fwd_pass: Vec<Vec<f32>> = self.forward_pass(input);
+        let mut gradients: Vec<Vec<Vec<f32>>> = self.backward_pass(fwd_pass, expected, loss);
+
+        for layer in gradients.iter_mut() {
+            for noduon in layer.iter_mut() {
+                for weight in noduon.iter_mut() {
+                    *weight *= learn_rate
+                }
+            }
+        }
+
+        self.change_weights(gradients)
+    } // End train
+
 }
 
 /// Builders ///
@@ -277,6 +362,28 @@ pub fn build_network(num_inputs: usize, network_shape: Vec<usize>, gen_func: AF,
     
     Network {layers}
 } // End build_network
+
+/// Helpers ///
+
+// activation_derivative takes in an activation function and returns its derivative
+pub fn activation_derivative(num: f32, function: &AF) -> f32 {
+    match function {
+        AF::ReLU => {
+            if num > 0.0 {
+                return 1.0
+            } else {
+                return 0.0
+            }
+        },
+        AF::Sigmoid => {
+            (1.0 / (1.0 + (-num).exp())) * (1.0 - (1.0 / (1.0 + (-num).exp())))
+        },
+        AF::Tanh => {
+            1.0 - num.tanh().powi(2)
+        },
+        _ => 1.0
+    }
+}
 
 /// Main fn for testing ///
 fn main() {
