@@ -33,8 +33,8 @@ impl Noduon {
             // neruon processing applies weighted sum and then activation function
             Noduon::Neuron(f) => {
 
-                let mut sum: f32 = f.weights.iter().zip(past_layer.iter()).fold(0.0, |acc, (&w, &p)| acc + w * p);
 
+                let mut sum: f32 = f.weights.iter().zip(past_layer.iter()).fold(0.0, |acc, (&w, &p)| acc + w * p);
                 // activation function
                 sum = match f.activation {
                     AF::Tanh => sum.tanh(),
@@ -43,7 +43,6 @@ impl Noduon {
                     _ => 0.0
                  };
 
-                 // return sum
                  sum
                 },
 
@@ -279,24 +278,30 @@ impl Network {
                 // If this layer is not the last, then calculate relative loss derivatives as normal
                 if i != self.layers.len() - 1 {
                     // Calculate the rld as the weight of its forward connection times the derivative of that noduon. Summed
-                    fwd_connections = weights[i + 1].len() - 1;
+
+                    if i != self.layers.len() - 2 {
+                        fwd_connections = weights[i + 1].len() - 1;
+                    } else {
+                        fwd_connections = weights[i + 1].len();
+                    }
+
                     for k in 0..fwd_connections {
-                        rld += derivatives[0][k] * weights[i + 1][k][j]
+                        rld += derivatives[0][k] * weights[i + 1][k][j];
                     }
 
                     // Compute the value derivative for this noduon as its rld times the derivative of its activation function
-                    let this_derivative: f32 = rld * activation_derivative(forward_pass[i][j], &functions[i][j]);
+                    let this_derivative: f32 = rld * activation_derivative(forward_pass[i + 1][j], &functions[i][j]);
                     // Push it to the layer derivatives
                     layer_derivatives.push(this_derivative);
 
                     // Calculate the weight gradients as this noduon's value derivative times the value of the backward connection
                     for k in 0..weights[i][j].len() {
-                        this_gradients.push(this_derivative * forward_pass[i - 1][k])
+                        this_gradients.push(this_derivative * forward_pass[i][k])
                     }
                 } // End default branch
                 else {  // This branch takes place on the last layer only
                     for k in 0..weights[i][j].len() {
-                        this_gradients.push(derivatives[0][j] * forward_pass[i - 1][k])
+                        this_gradients.push(derivatives[0][j] * forward_pass[i][k])
                     }
                 } // End if branches. At this point, the vec this_gradients will be full of the weight gradients of this noduon
                 layer_gradient.push(this_gradients);
@@ -318,7 +323,7 @@ impl Network {
         for layer in gradients.iter_mut() {
             for noduon in layer.iter_mut() {
                 for weight in noduon.iter_mut() {
-                    *weight *= learn_rate
+                    *weight *= -learn_rate
                 }
             }
         }
@@ -331,15 +336,16 @@ impl Network {
 /// Builders ///
 
 // build_neuron constructs a random neuron with a set number of weights and a specific function
-pub fn build_neuron(num_weights: usize, function: &AF) -> Noduon {
+pub fn build_neuron(num_weights: usize, function: &AF, scale: f32) -> Noduon {
     let mut rng: ThreadRng = rand::thread_rng();
-    let weights: Vec<f32> = (0..num_weights).map(|_| rng.gen_range(-1.0..=1.0)).collect();
+    let weights: Vec<f32> = (0..num_weights).map(|_| rng.gen_range(-1.0..=1.0) / scale).collect();
     Noduon::Neuron(Nodule { weights, activation: function.clone() })
 } // End build_neuron
 
 // build_layer constructs a layer with a specific number of noduons and weights, with random weights and a single function
-pub fn build_layer(num_noduons: usize, num_weights: usize, function: &AF) -> Layer{
-    let nods: Vec<Noduon> = (0..num_noduons).map(|_| build_neuron(num_weights, &function)).collect();
+pub fn build_layer(num_noduons: usize, num_weights: usize, function: &AF, hidden: bool) -> Layer{
+    let mut nods: Vec<Noduon> = (0..num_noduons).map(|_| build_neuron(num_weights, &function, num_weights as f32)).collect();
+    if hidden {nods.push(Noduon::Bias)}
     Layer {noduons: nods}
 } // End build_layer
 
@@ -350,15 +356,15 @@ pub fn build_network(num_inputs: usize, network_shape: Vec<usize>, gen_func: AF,
     let num_layers: usize = network_shape.len();
 
     // Build the first layer
-    layers.push(build_layer(network_shape[0], num_inputs, &gen_func));
+    layers.push(build_layer(network_shape[0], num_inputs + 1, &gen_func, true));
 
     // Build the hidden layers
     for i in 1..(num_layers - 1) {
-        layers.push(build_layer(network_shape[i], network_shape[i-1], &gen_func))
+        layers.push(build_layer(network_shape[i], network_shape[i-1] + 1, &gen_func, true))
     }
 
     // Build the output layer
-    layers.push(build_layer(network_shape[num_layers - 1], network_shape[num_layers - 2], &out_func));
+    layers.push(build_layer(network_shape[num_layers - 1], network_shape[num_layers - 2] + 1, &out_func, false));
     
     Network {layers}
 } // End build_network
@@ -383,9 +389,4 @@ pub fn activation_derivative(num: f32, function: &AF) -> f32 {
         },
         _ => 1.0
     }
-}
-
-/// Main fn for testing ///
-fn main() {
-    print!("hi")
 }
